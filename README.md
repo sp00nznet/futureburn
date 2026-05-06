@@ -56,9 +56,21 @@ We're going in order. No skipping.
 
 ## Status
 
-**v0.0.5 — audio plumbing.** NAudio is in. We can decode anything Windows Media Foundation understands (MP3, M4A, AAC, WMA, FLAC) plus WAV directly, resample to CD format (44.1 kHz / 16-bit / stereo), and write the result to a `.wav`. M3U / M3U8 playlists parse too — both simple and extended (`#EXTINF:` for duration + title), with relative paths resolved against the playlist file's directory.
+**v0.0.6 — the burn pipeline (untested on hardware as of writing).** The CLI now has a `burn` command that takes a playlist and a drive. The code path:
 
-The four-tile GUI shell from v0.0.4 is unchanged — **CD Info** is still the only live tile. Burning sub-windows wire up in v0.0.6+.
+1. Validates the playlist (every track exists + is decodable)
+2. Decodes any non-CD-format tracks to a temp dir (skips files that are already 44.1k / 16-bit / stereo WAV — the common case for Spotify rips)
+3. Pre-checks the disc — friendly bail-out if the CD-R is already used (you'll see the helpful message instead of a SCSI mode page error)
+4. Queries the disc via `MsftDiscFormat2TrackAtOnce` — sectors free, existing tracks, supported write speeds
+5. Validates: speed is in the supported list, capacity holds the playlist, disc is blank (or `--force`)
+6. In `--dry-run`: prints the plan and exits
+7. In real burn: y/N confirmation (skip with `--yes`), then `PrepareMedia` → `AddAudioTrack` per track → `ReleaseMedia`
+
+Hand-rolled COM throughout — the chosen TAO properties (`NumberOfExistingTracks`, `TotalSectorsOnMedia`, `SupportedWriteSpeeds`) all live on `IDiscFormat2TrackAtOnce` directly, no inherited base members needed, so we still don't need typed `[ComImport]` interfaces. Streaming uses a custom `ManagedIStream` (.NET Stream → COM IStream adapter) and a `CdPaddedAudioStream` (strips WAV header, pads each track to a 2352-byte CD sector boundary as IMAPI demands).
+
+**Status of the actual burning:** the code builds clean and the dry-run path runs end-to-end through Plan(). Real-disc validation is pending — needs a fresh blank CD-R in the drive.
+
+The four-tile GUI from v0.0.4 still hasn't been wired to the burn flow — that's v0.0.8.
 
 ```
 E:\futureburn

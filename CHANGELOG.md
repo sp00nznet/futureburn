@@ -4,6 +4,28 @@ All notable changes to futureburn will land here. Format roughly follows [Keep a
 
 ## [Unreleased]
 
+## [0.0.6] — 2026-05-06
+
+### Added
+- `Futureburn.Core/Imapi/AudioCdBurner.cs` — two-phase burn pipeline. `Plan()` validates the request and returns a `BurnPlan`; `ExecuteBurn()` actually writes. Uses `MsftDiscFormat2TrackAtOnce` via dynamic COM. No typed `[ComImport]` interfaces required — every TAO property we touch (`NumberOfExistingTracks`, `TotalSectorsOnMedia`, `FreeSectorsOnMedia`, `SupportedWriteSpeeds`) lives on `IDiscFormat2TrackAtOnce` directly.
+- `Futureburn.Core/Imapi/ManagedIStream.cs` — adapts a .NET `Stream` to a COM `IStream` so we can pass it to `AddAudioTrack`. Marked `[ComVisible(true)]` because the assembly default is false.
+- `Futureburn.Core/Audio/CdPaddedAudioStream.cs` — wraps a CD-format WAV file as raw PCM bytes padded to 2352-byte CD sectors (IMAPI's hard requirement).
+- CLI: `burn <playlist> <drive>` with `--dry-run`, `--speed Nx`, `--force`, `--yes` / `-y`, `--keep-temp` flags.
+- Smart pre-check: if `MsftDiscFormat2Data` can't read the loaded CD-R/CD-RW's capacity, we abort with a friendly "this disc isn't fresh" message instead of letting `PrepareMedia` fail later with a cryptic SCSI mode page error.
+- Tracks already in CD format (44.1k / 16-bit / stereo WAV) are passed through directly — no pointless re-decode of huge WAV files.
+- IMAPI track minimum-length enforcement (4 seconds = 300 sectors) to refuse tracks too short for CD-DA.
+
+### Notes (a.k.a. things we learned)
+- `IDiscFormat2TrackAtOnce.PrepareMedia()` must be called before `NumberOfExistingTracks`, sector counts, and `SupportedWriteSpeeds` are readable. PrepareMedia reserves the drive but writes nothing — releasing the COM object without `ReleaseMedia` aborts the session cleanly (no `AddAudioTrack` was issued, so nothing was committed to the disc).
+- For our test CD-R (already had data), both `MsftDiscFormat2Data` and `MsftDiscFormat2TrackAtOnce` refused to read it — exactly the expected symptom of a write-once disc that's already been used. The pre-check now catches this politely.
+
+### Verified
+- Builds clean. CLI prints the right `usage` text for `burn`.
+- Dry-run with the test playlist successfully reaches Plan() and surfaces the "disc isn't fresh" pre-check error when given a non-blank CD-R.
+
+### Pending
+- Real-hardware test with a fresh blank CD-R. Will update the changelog and README once we've completed an actual burn end-to-end.
+
 ## [0.0.5] — 2026-05-06
 
 ### Added

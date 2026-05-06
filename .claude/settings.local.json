@@ -15,7 +15,8 @@
       "Bash(dotnet sln *)",
       "Bash(dotnet add *)",
       "Bash(dotnet build *)",
-      "Bash(dotnet run *)"
+      "Bash(dotnet run *)",
+      "Read(//e/cd/spotify-download/wav/**)"
     ]
   }
 }

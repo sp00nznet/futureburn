@@ -20,6 +20,7 @@ return args[0].ToLowerInvariant() switch
     "probe"                        => ProbeAudio(args),
     "decode"                       => DecodeAudio(args),
     "playlist"                     => ShowPlaylist(args),
+    "burn"                         => BurnCommand(args),
     "help" or "--help" or "-h"     => PrintUsage(),
     _                              => Unknown(args[0]),
 };
@@ -27,19 +28,31 @@ return args[0].ToLowerInvariant() switch
 static bool HasFlag(string[] args, string flag)
     => args.Any(a => string.Equals(a, flag, StringComparison.OrdinalIgnoreCase));
 
+static string? FlagValue(string[] args, string flag)
+{
+    for (int i = 0; i < args.Length; i++)
+        if (string.Equals(args[i], flag, StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+            return args[i + 1];
+    return null;
+}
+
 static int PrintUsage()
 {
     Console.WriteLine();
     Console.WriteLine("usage:");
-    Console.WriteLine("  futureburn drives [-v|--verbose]   List optical drives + capabilities");
-    Console.WriteLine("  futureburn disc <drive>            Inspect the disc loaded in a drive");
-    Console.WriteLine("  futureburn probe <audio>           Show format / duration of an audio file");
-    Console.WriteLine("  futureburn decode <in> <out.wav>   Decode any audio file to a CD-format WAV");
-    Console.WriteLine("  futureburn playlist <file.m3u>     Parse and list an M3U / M3U8 playlist");
+    Console.WriteLine("  futureburn drives [-v|--verbose]      List optical drives + capabilities");
+    Console.WriteLine("  futureburn disc <drive>               Inspect the disc loaded in a drive");
+    Console.WriteLine("  futureburn probe <audio>              Show format / duration of an audio file");
+    Console.WriteLine("  futureburn decode <in> <out.wav>      Decode any audio file to a CD-format WAV");
+    Console.WriteLine("  futureburn playlist <file.m3u>        Parse and list an M3U / M3U8 playlist");
+    Console.WriteLine("  futureburn burn <playlist> <drive>    Burn an audio CD from a playlist");
+    Console.WriteLine("    flags: --dry-run     plan only, no actual burn");
+    Console.WriteLine("           --speed Nx    set burn speed (e.g. --speed 16x). Defaults to max supported.");
+    Console.WriteLine("           --force       overwrite a non-blank disc (CD-RW only)");
+    Console.WriteLine("           --yes / -y    skip the y/N confirmation prompt");
+    Console.WriteLine("           --keep-temp   keep decoded WAVs in the temp dir after we finish");
     Console.WriteLine();
     Console.WriteLine("audio formats: " + string.Join(", ", AudioDecoder.SupportedExtensions));
-    Console.WriteLine();
-    Console.WriteLine("Burning still isn't wired up. Coming in v0.0.6.");
     return 0;
 }
 
@@ -93,7 +106,6 @@ static int InspectDisc(string? identifier)
     {
         Console.WriteLine();
         Console.WriteLine("usage: futureburn disc <drive>");
-        Console.WriteLine("  e.g. futureburn disc F:");
         return 1;
     }
 
@@ -102,7 +114,6 @@ static int InspectDisc(string? identifier)
     {
         Console.WriteLine();
         Console.WriteLine($"Couldn't find a drive matching '{identifier}'.");
-        Console.WriteLine("Try `futureburn drives` to see what's available.");
         return 1;
     }
 
@@ -112,15 +123,8 @@ static int InspectDisc(string? identifier)
     Console.WriteLine();
 
     LoadedDisc disc;
-    try
-    {
-        disc = DiscInspector.InspectDrive(drive);
-    }
-    catch (DiscInspector.NoMediaException ex)
-    {
-        Console.WriteLine($"  {ex.Message}");
-        return 0;
-    }
+    try { disc = DiscInspector.InspectDrive(drive); }
+    catch (DiscInspector.NoMediaException ex) { Console.WriteLine($"  {ex.Message}"); return 0; }
 
     Console.WriteLine($"  Media:    {disc.MediaTypeName}");
 
@@ -129,7 +133,6 @@ static int InspectDisc(string? identifier)
         Console.WriteLine();
         Console.WriteLine("  Format details unavailable. The disc may be finalized,");
         Console.WriteLine("  read-only (DVD-ROM / BD-ROM), or a non-data format (audio CD, etc.).");
-        Console.WriteLine("  We'll dig deeper into these in later milestones.");
         return 0;
     }
 
@@ -146,82 +149,49 @@ static int InspectDisc(string? identifier)
 
 static int ProbeAudio(string[] args)
 {
-    if (args.Length < 2)
-    {
-        Console.WriteLine();
-        Console.WriteLine("usage: futureburn probe <audio-file>");
-        return 1;
-    }
-    var path = args[1];
+    if (args.Length < 2) { Console.WriteLine("\nusage: futureburn probe <audio-file>"); return 1; }
     try
     {
-        var info = AudioDecoder.Probe(path);
+        var info = AudioDecoder.Probe(args[1]);
         Console.WriteLine();
         Console.WriteLine($"  File:     {info.Path}");
         Console.WriteLine($"  Format:   {info.SampleRate:N0} Hz, {info.Channels} ch, {info.BitsPerSample}-bit, {info.Encoding}");
         Console.WriteLine($"  Duration: {info.Duration:mm\\:ss\\.ff}");
-        var minutes = info.EstimatedCdSectors / 75.0 / 60.0;
-        Console.WriteLine($"  CD time:  {info.EstimatedCdSectors:N0} sectors ({minutes:0.00} min)");
-        Console.WriteLine($"  CD-ready: {(info.IsCdFormat ? "yes — no resampling needed" : "no — will resample to 44.1 kHz / 16-bit / stereo")}");
+        Console.WriteLine($"  CD time:  {info.EstimatedCdSectors:N0} sectors ({info.EstimatedCdSectors / 75.0 / 60.0:0.00} min)");
+        Console.WriteLine($"  CD-ready: {(info.IsCdFormat ? "yes — no resampling needed" : "no — will resample")}");
         return 0;
     }
-    catch (Exception ex)
-    {
-        Console.Error.WriteLine($"probe failed: {ex.Message}");
-        return 1;
-    }
+    catch (Exception ex) { Console.Error.WriteLine($"probe failed: {ex.Message}"); return 1; }
 }
 
 static int DecodeAudio(string[] args)
 {
-    if (args.Length < 3)
-    {
-        Console.WriteLine();
-        Console.WriteLine("usage: futureburn decode <input-audio> <output.wav>");
-        return 1;
-    }
-    var input = args[1];
-    var output = args[2];
+    if (args.Length < 3) { Console.WriteLine("\nusage: futureburn decode <input-audio> <output.wav>"); return 1; }
     try
     {
         Console.WriteLine();
-        Console.WriteLine($"Decoding {input}");
-        Console.WriteLine($"      -> {output}");
-        AudioDecoder.DecodeToCdWav(input, output);
-        var fi = new FileInfo(output);
+        Console.WriteLine($"Decoding {args[1]}");
+        Console.WriteLine($"      -> {args[2]}");
+        AudioDecoder.DecodeToCdWav(args[1], args[2]);
+        var fi = new FileInfo(args[2]);
         Console.WriteLine($"Wrote {fi.Length:N0} bytes ({FormatBytes(fi.Length)}).");
         return 0;
     }
-    catch (Exception ex)
-    {
-        Console.Error.WriteLine($"decode failed: {ex.Message}");
-        return 1;
-    }
+    catch (Exception ex) { Console.Error.WriteLine($"decode failed: {ex.Message}"); return 1; }
 }
 
 static int ShowPlaylist(string[] args)
 {
-    if (args.Length < 2)
-    {
-        Console.WriteLine();
-        Console.WriteLine("usage: futureburn playlist <file.m3u | file.m3u8>");
-        return 1;
-    }
-    var path = args[1];
-    if (!File.Exists(path))
-    {
-        Console.Error.WriteLine($"Playlist not found: {path}");
-        return 1;
-    }
+    if (args.Length < 2) { Console.WriteLine("\nusage: futureburn playlist <file.m3u | file.m3u8>"); return 1; }
+    if (!File.Exists(args[1])) { Console.Error.WriteLine($"Playlist not found: {args[1]}"); return 1; }
 
     try
     {
-        var pl = PlaylistParser.Load(path);
+        var pl = PlaylistParser.Load(args[1]);
         Console.WriteLine();
         Console.WriteLine($"Loaded {pl.Entries.Count} track{(pl.Entries.Count == 1 ? "" : "s")} from {(pl.IsExtended ? "extended" : "simple")} M3U");
         Console.WriteLine($"  Source: {pl.SourcePath}");
         Console.WriteLine();
-
         int idx = 1;
         foreach (var e in pl.Entries)
         {
@@ -232,27 +202,183 @@ static int ShowPlaylist(string[] args)
             Console.WriteLine($"        {e.Path}");
             idx++;
         }
-
         if (pl.IsExtended && pl.TotalDuration > TimeSpan.Zero)
         {
             Console.WriteLine();
-            var total = pl.TotalDuration;
-            Console.WriteLine($"  Total: {total:hh\\:mm\\:ss}  (audio CD limit: 74-80 min)");
+            Console.WriteLine($"  Total: {pl.TotalDuration:hh\\:mm\\:ss}  (audio CD limit: 74-80 min)");
         }
-
         var missing = pl.Entries.Count(e => !File.Exists(e.Path));
         if (missing > 0)
-        {
-            Console.WriteLine();
-            Console.WriteLine($"  ! {missing} of {pl.Entries.Count} tracks not found on disk (marked with '?').");
-        }
+            Console.WriteLine($"\n  ! {missing} of {pl.Entries.Count} tracks not found on disk (marked with '?').");
         return 0;
+    }
+    catch (Exception ex) { Console.Error.WriteLine($"playlist load failed: {ex.Message}"); return 1; }
+}
+
+static int BurnCommand(string[] args)
+{
+    if (args.Length < 3)
+    {
+        Console.WriteLine();
+        Console.WriteLine("usage: futureburn burn <playlist> <drive> [--dry-run] [--speed Nx] [--force] [--yes] [--keep-temp]");
+        Console.WriteLine("  e.g. futureburn burn mix.m3u8 F: --dry-run");
+        Console.WriteLine("       futureburn burn mix.m3u8 F: --speed 16x");
+        return 1;
+    }
+
+    var playlistPath = args[1];
+    var driveId      = args[2];
+    bool dryRun      = HasFlag(args, "--dry-run");
+    bool force       = HasFlag(args, "--force");
+    bool skipConfirm = HasFlag(args, "--yes") || HasFlag(args, "-y");
+    bool keepTemp    = HasFlag(args, "--keep-temp");
+    int? speedKbps   = ParseSpeedFlag(args);
+
+    if (!File.Exists(playlistPath)) { Console.Error.WriteLine($"Playlist not found: {playlistPath}"); return 1; }
+
+    var drive = DriveEnumerator.Find(driveId);
+    if (drive is null)
+    {
+        Console.Error.WriteLine($"Drive not found: {driveId}");
+        Console.Error.WriteLine("Try `futureburn drives` to see what's available.");
+        return 1;
+    }
+
+    Playlist playlist;
+    try { playlist = PlaylistParser.Load(playlistPath); }
+    catch (Exception ex) { Console.Error.WriteLine($"playlist load failed: {ex.Message}"); return 1; }
+    if (playlist.Entries.Count == 0) { Console.Error.WriteLine("Playlist is empty."); return 1; }
+
+    Console.WriteLine();
+    Console.WriteLine($"  Playlist: {playlist.SourcePath}");
+    Console.WriteLine($"  Tracks:   {playlist.Entries.Count}");
+    Console.WriteLine($"  Drive:    {drive.PrimaryMount} {drive.VendorId} {drive.ProductId} ({drive.Revision})");
+    Console.WriteLine($"  Mode:     {(dryRun ? "DRY RUN — no actual burn" : "REAL BURN")}");
+    Console.WriteLine();
+
+    var tempDir = Path.Combine(Path.GetTempPath(), $"futureburn-{Guid.NewGuid():N}");
+    Console.WriteLine($"Planning burn (decoding non-CD-format tracks if any) ...");
+
+    AudioCdBurner.BurnPlan plan;
+    try
+    {
+        plan = AudioCdBurner.Plan(drive, playlist, tempDir, speedKbps, allowNonBlank: force);
+    }
+    catch (AudioCdBurner.BurnException ex)
+    {
+        Console.Error.WriteLine();
+        Console.Error.WriteLine($"PLAN FAILED:");
+        Console.Error.WriteLine($"  {ex.Message}");
+        TryCleanup(tempDir, keep: false);
+        return 1;
     }
     catch (Exception ex)
     {
-        Console.Error.WriteLine($"playlist load failed: {ex.Message}");
+        Console.Error.WriteLine();
+        Console.Error.WriteLine($"PLAN FAILED (unexpected): {ex.Message}");
+        TryCleanup(tempDir, keep: false);
         return 1;
     }
+
+    int decodedCount = plan.Tracks.Count(t => t.RequiredDecode);
+
+    Console.WriteLine();
+    Console.WriteLine("--- BURN PLAN ---");
+    Console.WriteLine($"  Disc:      {drive.PrimaryMount}  {(plan.DiscIsBlank ? "BLANK" : "HAS EXISTING TRACKS")}");
+    Console.WriteLine($"  Capacity:  {plan.DiscFreeSectors:N0} of {plan.DiscTotalSectors:N0} sectors free " +
+                      $"({plan.DiscFreeSectors / 75.0 / 60.0:0.00} min)");
+    Console.WriteLine();
+    Console.WriteLine($"  Tracks ({plan.Tracks.Count}):");
+    foreach (var t in plan.Tracks)
+    {
+        var title = t.Title ?? Path.GetFileName(t.SourcePath);
+        var marker = t.RequiredDecode ? "*" : " ";
+        Console.WriteLine($"    {marker} {t.Index,2}. {title}  ({t.Duration:mm\\:ss})");
+    }
+    if (decodedCount > 0)
+        Console.WriteLine($"    (* = decoded to CD format in {tempDir})");
+
+    Console.WriteLine();
+    Console.WriteLine($"  Total time:    {plan.TotalDuration:mm\\:ss}  ({plan.TotalSectors:N0} sectors)");
+    Console.WriteLine($"  Speed:         {AudioCdBurner.KbpsToCdX(plan.ChosenSpeedKbps)}x ({plan.ChosenSpeedKbps:N0} KB/s)");
+    if (plan.SupportedSpeedsKbps.Count > 0)
+        Console.WriteLine($"  Supported:     {string.Join(", ", plan.SupportedSpeedsKbps.Select(s => $"{AudioCdBurner.KbpsToCdX(s)}x"))}");
+    if (plan.EstimatedBurnTime > TimeSpan.Zero)
+        Console.WriteLine($"  Est. burn time: ~{plan.EstimatedBurnTime:mm\\:ss}  (write only; finalization adds ~30 sec)");
+    Console.WriteLine();
+
+    if (dryRun)
+    {
+        Console.WriteLine("DRY RUN COMPLETE — no actual burn performed.");
+        if (decodedCount > 0)
+        {
+            if (keepTemp)
+                Console.WriteLine($"Decoded WAVs left at: {tempDir}");
+            else
+                TryCleanup(tempDir, keep: false);
+        }
+        else
+        {
+            TryCleanup(tempDir, keep: false);  // empty dir, just remove
+        }
+        return 0;
+    }
+
+    if (!skipConfirm)
+    {
+        Console.Write($"This will write to {drive.PrimaryMount}. Continue? [y/N] ");
+        var answer = Console.ReadLine();
+        if (answer?.Trim().ToLowerInvariant() is not ("y" or "yes"))
+        {
+            Console.WriteLine("Aborted.");
+            TryCleanup(tempDir, keep: false);
+            return 0;
+        }
+    }
+
+    Console.WriteLine();
+    Console.WriteLine("Burning. Don't unplug the drive or close this window.");
+    Console.WriteLine();
+
+    try
+    {
+        AudioCdBurner.ExecuteBurn(plan, (current, total) =>
+        {
+            Console.WriteLine($"  -> Track {current}/{total} ...");
+        });
+        Console.WriteLine();
+        Console.WriteLine("BURN COMPLETE. Disc finalized.");
+        return 0;
+    }
+    catch (AudioCdBurner.BurnException ex)
+    {
+        Console.Error.WriteLine();
+        Console.Error.WriteLine($"BURN FAILED: {ex.Message}");
+        return 1;
+    }
+    finally
+    {
+        TryCleanup(tempDir, keep: keepTemp);
+    }
+}
+
+static int? ParseSpeedFlag(string[] args)
+{
+    var v = FlagValue(args, "--speed");
+    if (v is null) return null;
+    var s = v.Trim().ToLowerInvariant();
+    // Accept "16x", "16", "150kbps" — for now just N or Nx.
+    if (s.EndsWith("x")) s = s[..^1];
+    if (int.TryParse(s, out int n) && n > 0)
+        return n * AudioCdBurner.CdAudio1xKbps;
+    return null;
+}
+
+static void TryCleanup(string tempDir, bool keep)
+{
+    if (keep) return;
+    try { if (Directory.Exists(tempDir)) Directory.Delete(tempDir, recursive: true); }
+    catch { /* best-effort */ }
 }
 
 static int Unknown(string cmd)
