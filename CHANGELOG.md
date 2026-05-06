@@ -4,6 +4,21 @@ All notable changes to futureburn will land here. Format roughly follows [Keep a
 
 ## [Unreleased]
 
+## [0.0.2] — 2026-05-06
+
+### Added
+- `Futureburn.Core/Imapi/DriveEnumerator.cs` — hand-rolled IMAPI2 access via `Type.GetTypeFromProgID` + `dynamic`. No COM interface declarations, no NuGet wrappers. Returns a list of `OpticalDrive` records (vendor, product, firmware revision, mount points, unique id).
+- `futureburn drives` CLI command. Lists every optical drive Windows can see.
+- `futureburn help` / `--help` / `-h` for usage.
+
+### Changed
+- All three projects now target `net8.0-windows` (was `net8.0` for Core/Cli, already `net8.0-windows` for Gui). We're Win11-only, so this kills CA1416 warnings on Windows-specific APIs without scattering `[SupportedOSPlatform]` everywhere.
+- Hoisted `TargetFramework`, `Nullable`, `ImplicitUsings` into `Directory.Build.props`. The csprojs are now mercifully short.
+- Deleted the `Class1.cs` placeholder that came with `dotnet new classlib`.
+
+### Burns
+- Still nothing. But we know who's *capable* of burning now, which is progress.
+
 ## [0.0.1] — 2026-05-06
 
 ### Added

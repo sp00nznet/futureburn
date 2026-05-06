@@ -7,10 +7,10 @@
   -->
 
   <PropertyGroup>
-    <Version>0.0.1</Version>
-    <AssemblyVersion>0.0.1.0</AssemblyVersion>
-    <FileVersion>0.0.1.0</FileVersion>
-    <InformationalVersion>0.0.1</InformationalVersion>
+    <Version>0.0.2</Version>
+    <AssemblyVersion>0.0.2.0</AssemblyVersion>
+    <FileVersion>0.0.2.0</FileVersion>
+    <InformationalVersion>0.0.2</InformationalVersion>
     <!-- Don't auto-append +<git-sha> to the version string. Re-enable later for shipped builds. -->
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
   </PropertyGroup>
@@ -24,6 +24,8 @@
   </PropertyGroup>
 
   <PropertyGroup>
+    <!-- Win11-only project. net8.0-windows unlocks Windows-specific APIs (IMAPI2, WPF) without CA1416 warnings. -->
+    <TargetFramework>net8.0-windows</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <LangVersion>latest</LangVersion>

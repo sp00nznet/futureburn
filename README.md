@@ -56,7 +56,7 @@ We're going in order. No skipping.
 
 ## Status
 
-**v0.0.1 — the scaffold.** Solution builds clean. CLI runs and confidently announces it has nothing to burn. We're poised for greatness.
+**v0.0.2 — IMAPI2 says hi.** We can see optical drives now. Hand-rolled COM, no NuGet wrapper, just `Type.GetTypeFromProgID` and `dynamic`. Feels like the year 2007 in here, in a good way.
 
 ```
 E:\futureburn
@@ -64,28 +64,47 @@ E:\futureburn
 ├── Directory.Build.props      <- centralized version + shared compile settings
 ├── CHANGELOG.md
 └── src/
-    ├── Futureburn.Core/        <- the shared library, where burning logic will live
-    ├── Futureburn.Cli/         <- the console app
-    └── Futureburn.Gui/         <- the WPF app
+    ├── Futureburn.Core/
+    │   └── Imapi/
+    │       └── DriveEnumerator.cs   <- talks to IMAPI2, returns OpticalDrive records
+    ├── Futureburn.Cli/         <- console app, has a `drives` command now
+    └── Futureburn.Gui/         <- WPF app, still an empty window
 ```
 
-Both `Cli` and `Gui` reference `Core`, so when we eventually write `BurnAudioCd(...)` in `Core` both apps can call it.
-
-**Up next:** start a `Futureburn.Core/Imapi/` folder and get a "hello, optical drive" handshake going via IMAPI2 — enumerate burners, report their capabilities. From there, v0.1.
+**Up next:** capabilities — for each drive, ask IMAPI2 what media it can write (CD-R? DVD+R DL? BD-R?). Once we know that, we pick a drive that can write CD-R and start writing the actual audio CD burn path. That's the road to v0.1.
 
 ---
 
 ## Running it
 
-The CLI runs (it just doesn't burn anything yet):
-
 ```powershell
+# What does the program think it is?
 dotnet run --project src/Futureburn.Cli
-# futureburn v0.0.1
-# Nothing to burn yet — check the roadmap.
+
+# What optical drives does Windows see?
+dotnet run --project src/Futureburn.Cli -- drives
 ```
 
-The GUI compiles and shows an empty window:
+Sample output:
+
+```
+futureburn v0.0.2
+
+Found 2 optical drives:
+
+  F:\
+    Vendor:   HL-DT-ST
+    Product:  DVDRAM GE20LU10
+    Revision: FE06
+    Id:       \\?\usbstor#cdrom&ven_hl-dt-st&prod_dvdram_ge20lu10&rev_fe06#...
+
+  G:\
+    Vendor:   Msft
+    Product:  Virtual DVD-ROM
+    ...
+```
+
+GUI runs but is still a blank window:
 
 ```powershell
 dotnet run --project src/Futureburn.Gui
