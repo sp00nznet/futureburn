@@ -1,0 +1,33 @@
+<Project>
+
+  <!--
+    Centralized versioning + shared compile settings.
+    Bump <Version> here; every project picks it up automatically.
+    SemVer: MAJOR.MINOR.PATCH (see CHANGELOG.md for what each version means).
+  -->
+
+  <PropertyGroup>
+    <Version>0.0.1</Version>
+    <AssemblyVersion>0.0.1.0</AssemblyVersion>
+    <FileVersion>0.0.1.0</FileVersion>
+    <InformationalVersion>0.0.1</InformationalVersion>
+    <!-- Don't auto-append +<git-sha> to the version string. Re-enable later for shipped builds. -->
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <Authors>sp00nz</Authors>
+    <Product>futureburn</Product>
+    <Company>futureburn</Company>
+    <Copyright>Copyright (c) 2026 sp00nz</Copyright>
+    <Description>A friendly modern CD/DVD burner for Windows 11.</Description>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+</Project>

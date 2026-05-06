@@ -56,18 +56,48 @@ We're going in order. No skipping.
 
 ## Status
 
-**Day 1.** Repo just born. No code yet. Pure ambition.
+**v0.0.1 — the scaffold.** Solution builds clean. CLI runs and confidently announces it has nothing to burn. We're poised for greatness.
 
-The next step is scaffolding the .NET solution — three projects:
-- `Futureburn.Core` — shared library where the burning logic lives
-- `Futureburn.Cli` — the console app
-- `Futureburn.Gui` — the WPF app
+```
+E:\futureburn
+├── Futureburn.sln
+├── Directory.Build.props      <- centralized version + shared compile settings
+├── CHANGELOG.md
+└── src/
+    ├── Futureburn.Core/        <- the shared library, where burning logic will live
+    ├── Futureburn.Cli/         <- the console app
+    └── Futureburn.Gui/         <- the WPF app
+```
+
+Both `Cli` and `Gui` reference `Core`, so when we eventually write `BurnAudioCd(...)` in `Core` both apps can call it.
+
+**Up next:** start a `Futureburn.Core/Imapi/` folder and get a "hello, optical drive" handshake going via IMAPI2 — enumerate burners, report their capabilities. From there, v0.1.
 
 ---
 
 ## Running it
 
-Nothing to run yet. Check back soon.
+The CLI runs (it just doesn't burn anything yet):
+
+```powershell
+dotnet run --project src/Futureburn.Cli
+# futureburn v0.0.1
+# Nothing to burn yet — check the roadmap.
+```
+
+The GUI compiles and shows an empty window:
+
+```powershell
+dotnet run --project src/Futureburn.Gui
+```
+
+---
+
+## Versioning
+
+One number, one place. Edit `<Version>` in `Directory.Build.props` and every project picks it up. The CLI reads it back at runtime via `AssemblyInformationalVersionAttribute`, so you can always ask the binary what it thinks it is.
+
+Each version's notes live in [CHANGELOG.md](./CHANGELOG.md).
 
 ---
 

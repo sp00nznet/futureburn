@@ -1,0 +1,41 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{E2A83C8A-B981-45CE-9EB0-B1F4F96E1B21}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Futureburn.Core", "src\Futureburn.Core\Futureburn.Core.csproj", "{BAE35B80-8FCA-4439-BCED-3CCE89D8D764}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Futureburn.Cli", "src\Futureburn.Cli\Futureburn.Cli.csproj", "{673CE66C-7596-47AC-A478-BF581F60BDA3}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Futureburn.Gui", "src\Futureburn.Gui\Futureburn.Gui.csproj", "{EF577913-8EDB-4BC5-B476-6BA2B57BFBEE}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{BAE35B80-8FCA-4439-BCED-3CCE89D8D764}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{BAE35B80-8FCA-4439-BCED-3CCE89D8D764}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{BAE35B80-8FCA-4439-BCED-3CCE89D8D764}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{BAE35B80-8FCA-4439-BCED-3CCE89D8D764}.Release|Any CPU.Build.0 = Release|Any CPU
+		{673CE66C-7596-47AC-A478-BF581F60BDA3}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{673CE66C-7596-47AC-A478-BF581F60BDA3}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{673CE66C-7596-47AC-A478-BF581F60BDA3}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{673CE66C-7596-47AC-A478-BF581F60BDA3}.Release|Any CPU.Build.0 = Release|Any CPU
+		{EF577913-8EDB-4BC5-B476-6BA2B57BFBEE}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{EF577913-8EDB-4BC5-B476-6BA2B57BFBEE}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{EF577913-8EDB-4BC5-B476-6BA2B57BFBEE}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{EF577913-8EDB-4BC5-B476-6BA2B57BFBEE}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{BAE35B80-8FCA-4439-BCED-3CCE89D8D764} = {E2A83C8A-B981-45CE-9EB0-B1F4F96E1B21}
+		{673CE66C-7596-47AC-A478-BF581F60BDA3} = {E2A83C8A-B981-45CE-9EB0-B1F4F96E1B21}
+		{EF577913-8EDB-4BC5-B476-6BA2B57BFBEE} = {E2A83C8A-B981-45CE-9EB0-B1F4F96E1B21}
+	EndGlobalSection
+EndGlobal
