@@ -56,22 +56,26 @@ We're going in order. No skipping.
 
 ## Status
 
-**v0.0.2 — IMAPI2 says hi.** We can see optical drives now. Hand-rolled COM, no NuGet wrapper, just `Type.GetTypeFromProgID` and `dynamic`. Feels like the year 2007 in here, in a good way.
+**v0.0.3 — drive capabilities + disc inspection.** We now ask each drive what kinds of media it can read and write, decode every MMC profile / feature code we know about, and gracefully expose the ones we don't know yet as raw hex. Same hand-rolled COM, same `dynamic`, no wrapper packages.
 
 ```
 E:\futureburn
 ├── Futureburn.sln
-├── Directory.Build.props      <- centralized version + shared compile settings
+├── Directory.Build.props
 ├── CHANGELOG.md
 └── src/
     ├── Futureburn.Core/
     │   └── Imapi/
-    │       └── DriveEnumerator.cs   <- talks to IMAPI2, returns OpticalDrive records
-    ├── Futureburn.Cli/         <- console app, has a `drives` command now
-    └── Futureburn.Gui/         <- WPF app, still an empty window
+    │       ├── Mmc.cs               <- profile + feature code lookup tables
+    │       ├── OpticalDrive.cs      <- drive record (vendor, profiles, feature pages, ...)
+    │       ├── LoadedDisc.cs        <- what's in the drive right now
+    │       ├── DriveEnumerator.cs   <- enumerate + Find(identifier)
+    │       └── DiscInspector.cs     <- inspect media via MsftDiscFormat2Data
+    ├── Futureburn.Cli/         <- has `drives`, `drives -v`, `disc <drive>`
+    └── Futureburn.Gui/         <- still an empty WPF window
 ```
 
-**Up next:** capabilities — for each drive, ask IMAPI2 what media it can write (CD-R? DVD+R DL? BD-R?). Once we know that, we pick a drive that can write CD-R and start writing the actual audio CD burn path. That's the road to v0.1.
+**Up next:** v0.1 — burn an audio CD from the command line. That means decoding MP3/FLAC into 16-bit 44.1kHz stereo PCM, picking the right IMAPI2 format object for audio (`MsftDiscFormat2RawCD` and `MsftDiscFormat2TrackAtOnce`), and figuring out the CSV format we want to feed in.
 
 ---
 
@@ -81,27 +85,29 @@ E:\futureburn
 # What does the program think it is?
 dotnet run --project src/Futureburn.Cli
 
-# What optical drives does Windows see?
+# What optical drives does Windows see, and what can each one do?
 dotnet run --project src/Futureburn.Cli -- drives
+
+# Show every profile and feature page the drive reports (raw codes included)
+dotnet run --project src/Futureburn.Cli -- drives -v
+
+# What's in drive F: right now?
+dotnet run --project src/Futureburn.Cli -- disc F:
 ```
 
-Sample output:
+Sample `drives` output:
 
 ```
-futureburn v0.0.2
-
 Found 2 optical drives:
 
-  F:\
-    Vendor:   HL-DT-ST
-    Product:  DVDRAM GE20LU10
-    Revision: FE06
-    Id:       \\?\usbstor#cdrom&ven_hl-dt-st&prod_dvdram_ge20lu10&rev_fe06#...
+  F:\  HL-DT-ST DVDRAM GE20LU10 (FE06)
+    Reads:  CD-ROM; DVD-ROM
+    Writes: CD-R, CD-RW; DVD-RAM, DVD-R Sequential, DVD-R DL Sequential, ...
+    Loaded: CD-R
 
-  G:\
-    Vendor:   Msft
-    Product:  Virtual DVD-ROM
-    ...
+  G:\  Msft Virtual DVD-ROM (1.0)
+    Reads:  CD-ROM; DVD-ROM
+    Loaded: DVD-ROM
 ```
 
 GUI runs but is still a blank window:

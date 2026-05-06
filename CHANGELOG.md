@@ -4,6 +4,23 @@ All notable changes to futureburn will land here. Format roughly follows [Keep a
 
 ## [Unreleased]
 
+## [0.0.3] — 2026-05-06
+
+### Added
+- `Futureburn.Core/Imapi/Mmc.cs` — lookup tables for MMC profile codes (CD-R, DVD+R DL, BD-RE, HD DVD-RAM, ...) and feature pages, plus the IMAPI media physical type enum. Unknown codes are still surfaced as raw hex with an "Unknown" label so weird drives (Xbox 360, exotic Blu-ray formats) stay visible.
+- `Futureburn.Core/Imapi/OpticalDrive.cs` — extracted into its own file, now carries `SupportedProfiles`, `CurrentProfiles`, `SupportedFeaturePages`, `CurrentFeaturePages`, `CanLoadMedia`, plus `WritableProfiles` / `ReadOnlyProfiles` / `PrimaryMount` conveniences.
+- `Futureburn.Core/Imapi/LoadedDisc.cs` — record describing what's in the drive: media type, sectors total/free, next writable address, current + supported write speeds, blank flag. Has a `HasFormatDetails` flag for when MsftDiscFormat2Data can't read the disc (audio CDs, finalized media, ROM).
+- `Futureburn.Core/Imapi/DiscInspector.cs` — uses MsftDiscFormat2Data to read media info. Fails gracefully on non-data discs.
+- `DriveEnumerator.Find(identifier)` — look up a drive by mount point ("F", "F:", "F:\\") or by unique id.
+- CLI: `drives -v` / `drives --verbose` dumps every supported profile and feature page (raw codes shown for unknown ones).
+- CLI: `disc <drive>` inspects the loaded media in a drive.
+
+### Notes (a.k.a. things we learned the hard way)
+- The IDispatch on `MsftDiscFormat2Data` doesn't expose the inherited `IDiscFormat2` base members (CurrentMediaType, MediaPhysicallyBlank, etc.) when we go through C# `dynamic`. To stay hand-rolled (no `[ComImport]` interface declarations), we derive media type from the drive's CurrentProfile and infer "blank" from `FreeSectors == TotalSectors`. If we ever need authoritative state, the next step is to declare a typed IDiscFormat2 and cast.
+
+### Burns
+- Still nothing. But we now know exactly which of your drives can write CD-R, DVD-R DL, or whatever exotic format you've got plugged in.
+
 ## [0.0.2] — 2026-05-06
 
 ### Added
