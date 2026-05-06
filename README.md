@@ -56,7 +56,19 @@ We're going in order. No skipping.
 
 ## Status
 
-**v0.0.3 — drive capabilities + disc inspection.** We now ask each drive what kinds of media it can read and write, decode every MMC profile / feature code we know about, and gracefully expose the ones we don't know yet as raw hex. Same hand-rolled COM, same `dynamic`, no wrapper packages.
+**v0.0.4 — the four-tile shell is up.** The GUI now opens to the main window from your sketch: four big tiles in a 2×2 grid, plus a menu bar and status bar.
+
+```
++---------------------------+---------------------------+
+|     Burn Audio CD         |     Burn Video DVD        |
+|  MP3s in. Disc out.       |  MKV in. Watchable disc.  |
++---------------------------+---------------------------+
+|         CD Info           |        Settings           |
+|  What is this disc?       |  The boring stuff.        |
++---------------------------+---------------------------+
+```
+
+**CD Info** is the only tile with real meat behind it for now — it lists optical drives, lets you click one, and shows a live readout of capabilities + loaded media (the same view as the CLI's `disc` command, but interactive). The other three tiles open friendly placeholder windows that say "ships in v0.X."
 
 ```
 E:\futureburn
@@ -67,15 +79,25 @@ E:\futureburn
     ├── Futureburn.Core/
     │   └── Imapi/
     │       ├── Mmc.cs               <- profile + feature code lookup tables
-    │       ├── OpticalDrive.cs      <- drive record (vendor, profiles, feature pages, ...)
-    │       ├── LoadedDisc.cs        <- what's in the drive right now
-    │       ├── DriveEnumerator.cs   <- enumerate + Find(identifier)
-    │       └── DiscInspector.cs     <- inspect media via MsftDiscFormat2Data
-    ├── Futureburn.Cli/         <- has `drives`, `drives -v`, `disc <drive>`
-    └── Futureburn.Gui/         <- still an empty WPF window
+    │       ├── OpticalDrive.cs
+    │       ├── LoadedDisc.cs
+    │       ├── DriveEnumerator.cs
+    │       └── DiscInspector.cs
+    ├── Futureburn.Cli/         <- `drives`, `drives -v`, `disc <drive>`
+    └── Futureburn.Gui/
+        ├── MainWindow.xaml          <- the four-tile shell + menu bar
+        ├── CdInfoWindow.xaml        <- drive list + live disc info
+        └── PlaceholderWindow.xaml   <- "ships in v0.X" for the other tiles
 ```
 
-**Up next:** v0.1 — burn an audio CD from the command line. That means decoding MP3/FLAC into 16-bit 44.1kHz stereo PCM, picking the right IMAPI2 format object for audio (`MsftDiscFormat2RawCD` and `MsftDiscFormat2TrackAtOnce`), and figuring out the CSV format we want to feed in.
+**Up next:** v0.1 — burn an audio CD. The big leap. Probably split into milestones like:
+- v0.0.5: pull in NAudio, decode an MP3 to PCM, write a `.wav` to disk
+- v0.0.6: wire up `MsftDiscFormat2RawCD` and burn a single track to a blank CD-R
+- v0.0.7: multi-track from a CSV (`futureburn tracks.csv`)
+- v0.0.8: same flow in the GUI's **Burn Audio CD** tile (drag-drop + reorder)
+- v0.1.0: polish, error messages, test on a few different blank discs
+
+Somewhere in there we'll also do the typed `[ComImport] IDiscFormat2` work to get authoritative blank/finalized state — the **CD Info** tile would benefit from it, and we'll need it for safety checks before burning.
 
 ---
 
@@ -110,11 +132,13 @@ Found 2 optical drives:
     Loaded: DVD-ROM
 ```
 
-GUI runs but is still a blank window:
+GUI:
 
 ```powershell
 dotnet run --project src/Futureburn.Gui
 ```
+
+Opens the four-tile main window. Click **CD Info** for a live drive/disc browser. The other three tiles open "not done yet" placeholders that point at the roadmap.
 
 ---
 

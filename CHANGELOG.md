@@ -4,6 +4,21 @@ All notable changes to futureburn will land here. Format roughly follows [Keep a
 
 ## [Unreleased]
 
+## [0.0.4] — 2026-05-06
+
+### Added
+- **The four-tile shell.** `MainWindow` is now a 2×2 grid of big tile buttons (Burn Audio CD / Burn Video DVD / CD Info / Settings) with a menu bar (File → Exit, Help → About) and a status bar. Each tile has a quippy subtitle.
+- `CdInfoWindow` — the **CD Info** tile opens a real sub-program: a drive list on the left, a live details pane on the right (capabilities, loaded media, capacity, write speeds), plus a Refresh button. Same data the CLI's `drives` and `disc` commands show, just interactive.
+- `PlaceholderWindow` — parameterized "this ships in v0.X" dialog reused by the other three tiles.
+- About dialog with the GitHub URL, because every passion project deserves an About box.
+
+### Notes
+- Code-behind, not MVVM. We'll graduate to MVVM if/when bindings get hairy enough to earn the ceremony.
+- No third-party packages. WPF defaults all the way down.
+
+### Burns
+- Still nothing. But you can now click on **Burn Audio CD** and read a polite refusal in window form.
+
 ## [0.0.3] — 2026-05-06
 
 ### Added
