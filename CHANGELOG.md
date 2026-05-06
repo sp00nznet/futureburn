@@ -4,6 +4,22 @@ All notable changes to futureburn will land here. Format roughly follows [Keep a
 
 ## [Unreleased]
 
+## [0.0.5] — 2026-05-06
+
+### Added
+- **NAudio** (2.3.0) added to `Futureburn.Core`. First — and so far only — third-party audio dependency. Justified because writing MP3/AAC/FLAC decoders from scratch is a separate career.
+- `Futureburn.Core/Audio/CdFormat.cs` — Red Book audio constants (44.1 kHz, 16-bit, stereo, 2352-byte sectors, 75 sectors/sec) plus duration/sector math helpers.
+- `Futureburn.Core/Audio/AudioDecoder.cs` — `Probe()` returns format/duration without decoding; `DecodeToCdWav()` decodes any supported file and writes a CD-format WAV. Inputs that are already CD-format skip the resampler entirely. WAV uses NAudio's lightweight `WaveFileReader`; MP3 / M4A / AAC / WMA / FLAC go through Windows Media Foundation via `MediaFoundationReader`.
+- `Futureburn.Core/Audio/Playlist.cs` — M3U / M3U8 parser. Handles both simple (paths only) and extended (`#EXTM3U` + `#EXTINF:<seconds>,<title>`) flavors. Relative paths resolved against the playlist's directory.
+- CLI: `probe <file>`, `decode <in> <out.wav>`, `playlist <file.m3u>`. The probe command tells you whether resampling will be needed.
+
+### Verified
+- Decoded `C:\Windows\Media\Alarm01.wav` (22050 Hz / stereo / 16-bit) → CD-format WAV (44100 Hz / stereo / 16-bit). Round-tripped probe confirms `IsCdFormat: yes — no resampling needed`.
+- Extended M3U with a missing-file entry parses correctly, marks the missing track with `?`, and reports the total duration.
+
+### Burns
+- Still nothing! But we can now produce the exact bytes a CD wants. v0.0.6 carries those bytes to a disc.
+
 ## [0.0.4] — 2026-05-06
 
 ### Added

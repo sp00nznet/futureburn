@@ -1,4 +1,5 @@
 using System.Reflection;
+using Futureburn.Core.Audio;
 using Futureburn.Core.Imapi;
 
 string version = Assembly.GetExecutingAssembly()
@@ -16,6 +17,9 @@ return args[0].ToLowerInvariant() switch
 {
     "drives" or "--drives" or "-d" => ListDrives(verbose: HasFlag(args, "-v") || HasFlag(args, "--verbose")),
     "disc"                         => InspectDisc(args.Length >= 2 ? args[1] : null),
+    "probe"                        => ProbeAudio(args),
+    "decode"                       => DecodeAudio(args),
+    "playlist"                     => ShowPlaylist(args),
     "help" or "--help" or "-h"     => PrintUsage(),
     _                              => Unknown(args[0]),
 };
@@ -29,13 +33,13 @@ static int PrintUsage()
     Console.WriteLine("usage:");
     Console.WriteLine("  futureburn drives [-v|--verbose]   List optical drives + capabilities");
     Console.WriteLine("  futureburn disc <drive>            Inspect the disc loaded in a drive");
+    Console.WriteLine("  futureburn probe <audio>           Show format / duration of an audio file");
+    Console.WriteLine("  futureburn decode <in> <out.wav>   Decode any audio file to a CD-format WAV");
+    Console.WriteLine("  futureburn playlist <file.m3u>     Parse and list an M3U / M3U8 playlist");
     Console.WriteLine();
-    Console.WriteLine("examples:");
-    Console.WriteLine("  futureburn drives");
-    Console.WriteLine("  futureburn drives -v");
-    Console.WriteLine("  futureburn disc F:");
+    Console.WriteLine("audio formats: " + string.Join(", ", AudioDecoder.SupportedExtensions));
     Console.WriteLine();
-    Console.WriteLine("Burning isn't wired up yet. Soon.");
+    Console.WriteLine("Burning still isn't wired up. Coming in v0.0.6.");
     return 0;
 }
 
@@ -138,6 +142,117 @@ static int InspectDisc(string? identifier)
     if (disc.SupportedWriteSpeedsKbps.Count > 0)
         Console.WriteLine($"  Supported write speeds: {string.Join(", ", disc.SupportedWriteSpeedsKbps.Select(s => $"{s:N0} KB/s"))}");
     return 0;
+}
+
+static int ProbeAudio(string[] args)
+{
+    if (args.Length < 2)
+    {
+        Console.WriteLine();
+        Console.WriteLine("usage: futureburn probe <audio-file>");
+        return 1;
+    }
+    var path = args[1];
+    try
+    {
+        var info = AudioDecoder.Probe(path);
+        Console.WriteLine();
+        Console.WriteLine($"  File:     {info.Path}");
+        Console.WriteLine($"  Format:   {info.SampleRate:N0} Hz, {info.Channels} ch, {info.BitsPerSample}-bit, {info.Encoding}");
+        Console.WriteLine($"  Duration: {info.Duration:mm\\:ss\\.ff}");
+        var minutes = info.EstimatedCdSectors / 75.0 / 60.0;
+        Console.WriteLine($"  CD time:  {info.EstimatedCdSectors:N0} sectors ({minutes:0.00} min)");
+        Console.WriteLine($"  CD-ready: {(info.IsCdFormat ? "yes — no resampling needed" : "no — will resample to 44.1 kHz / 16-bit / stereo")}");
+        return 0;
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"probe failed: {ex.Message}");
+        return 1;
+    }
+}
+
+static int DecodeAudio(string[] args)
+{
+    if (args.Length < 3)
+    {
+        Console.WriteLine();
+        Console.WriteLine("usage: futureburn decode <input-audio> <output.wav>");
+        return 1;
+    }
+    var input = args[1];
+    var output = args[2];
+    try
+    {
+        Console.WriteLine();
+        Console.WriteLine($"Decoding {input}");
+        Console.WriteLine($"      -> {output}");
+        AudioDecoder.DecodeToCdWav(input, output);
+        var fi = new FileInfo(output);
+        Console.WriteLine($"Wrote {fi.Length:N0} bytes ({FormatBytes(fi.Length)}).");
+        return 0;
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"decode failed: {ex.Message}");
+        return 1;
+    }
+}
+
+static int ShowPlaylist(string[] args)
+{
+    if (args.Length < 2)
+    {
+        Console.WriteLine();
+        Console.WriteLine("usage: futureburn playlist <file.m3u | file.m3u8>");
+        return 1;
+    }
+    var path = args[1];
+    if (!File.Exists(path))
+    {
+        Console.Error.WriteLine($"Playlist not found: {path}");
+        return 1;
+    }
+
+    try
+    {
+        var pl = PlaylistParser.Load(path);
+        Console.WriteLine();
+        Console.WriteLine($"Loaded {pl.Entries.Count} track{(pl.Entries.Count == 1 ? "" : "s")} from {(pl.IsExtended ? "extended" : "simple")} M3U");
+        Console.WriteLine($"  Source: {pl.SourcePath}");
+        Console.WriteLine();
+
+        int idx = 1;
+        foreach (var e in pl.Entries)
+        {
+            var marker = File.Exists(e.Path) ? " " : "?";
+            var title  = e.Title ?? Path.GetFileName(e.Path);
+            var dur    = e.Duration is { } d ? $"  ({d:mm\\:ss})" : "";
+            Console.WriteLine($"  {marker} {idx,2}. {title}{dur}");
+            Console.WriteLine($"        {e.Path}");
+            idx++;
+        }
+
+        if (pl.IsExtended && pl.TotalDuration > TimeSpan.Zero)
+        {
+            Console.WriteLine();
+            var total = pl.TotalDuration;
+            Console.WriteLine($"  Total: {total:hh\\:mm\\:ss}  (audio CD limit: 74-80 min)");
+        }
+
+        var missing = pl.Entries.Count(e => !File.Exists(e.Path));
+        if (missing > 0)
+        {
+            Console.WriteLine();
+            Console.WriteLine($"  ! {missing} of {pl.Entries.Count} tracks not found on disk (marked with '?').");
+        }
+        return 0;
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"playlist load failed: {ex.Message}");
+        return 1;
+    }
 }
 
 static int Unknown(string cmd)

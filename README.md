@@ -56,19 +56,9 @@ We're going in order. No skipping.
 
 ## Status
 
-**v0.0.4 — the four-tile shell is up.** The GUI now opens to the main window from your sketch: four big tiles in a 2×2 grid, plus a menu bar and status bar.
+**v0.0.5 — audio plumbing.** NAudio is in. We can decode anything Windows Media Foundation understands (MP3, M4A, AAC, WMA, FLAC) plus WAV directly, resample to CD format (44.1 kHz / 16-bit / stereo), and write the result to a `.wav`. M3U / M3U8 playlists parse too — both simple and extended (`#EXTINF:` for duration + title), with relative paths resolved against the playlist file's directory.
 
-```
-+---------------------------+---------------------------+
-|     Burn Audio CD         |     Burn Video DVD        |
-|  MP3s in. Disc out.       |  MKV in. Watchable disc.  |
-+---------------------------+---------------------------+
-|         CD Info           |        Settings           |
-|  What is this disc?       |  The boring stuff.        |
-+---------------------------+---------------------------+
-```
-
-**CD Info** is the only tile with real meat behind it for now — it lists optical drives, lets you click one, and shows a live readout of capabilities + loaded media (the same view as the CLI's `disc` command, but interactive). The other three tiles open friendly placeholder windows that say "ships in v0.X."
+The four-tile GUI shell from v0.0.4 is unchanged — **CD Info** is still the only live tile. Burning sub-windows wire up in v0.0.6+.
 
 ```
 E:\futureburn
@@ -77,44 +67,31 @@ E:\futureburn
 ├── CHANGELOG.md
 └── src/
     ├── Futureburn.Core/
-    │   └── Imapi/
-    │       ├── Mmc.cs               <- profile + feature code lookup tables
-    │       ├── OpticalDrive.cs
-    │       ├── LoadedDisc.cs
-    │       ├── DriveEnumerator.cs
-    │       └── DiscInspector.cs
-    ├── Futureburn.Cli/         <- `drives`, `drives -v`, `disc <drive>`
-    └── Futureburn.Gui/
-        ├── MainWindow.xaml          <- the four-tile shell + menu bar
-        ├── CdInfoWindow.xaml        <- drive list + live disc info
-        └── PlaceholderWindow.xaml   <- "ships in v0.X" for the other tiles
+    │   ├── Imapi/                  <- IMAPI2: drive enum, capabilities, disc inspection
+    │   └── Audio/
+    │       ├── CdFormat.cs         <- Red Book audio constants
+    │       ├── AudioDecoder.cs     <- decode + resample anything → CD-format WAV
+    │       └── Playlist.cs         <- M3U / M3U8 parser
+    ├── Futureburn.Cli/             <- `drives`, `disc`, `probe`, `decode`, `playlist`
+    └── Futureburn.Gui/             <- MainWindow + CdInfoWindow + PlaceholderWindow
 ```
 
-**Up next:** v0.1 — burn an audio CD. The big leap. Probably split into milestones like:
-- v0.0.5: pull in NAudio, decode an MP3 to PCM, write a `.wav` to disk
-- v0.0.6: wire up `MsftDiscFormat2RawCD` and burn a single track to a blank CD-R
-- v0.0.7: multi-track from a CSV (`futureburn tracks.csv`)
-- v0.0.8: same flow in the GUI's **Burn Audio CD** tile (drag-drop + reorder)
-- v0.1.0: polish, error messages, test on a few different blank discs
-
-Somewhere in there we'll also do the typed `[ComImport] IDiscFormat2` work to get authoritative blank/finalized state — the **CD Info** tile would benefit from it, and we'll need it for safety checks before burning.
+**Up next:** v0.0.6 — actually burn the bytes. Wire up `MsftDiscFormat2RawCD` (or `MsftDiscFormat2TrackAtOnce`) and feed it the CD-format PCM stream. This is also when we declare a typed `[ComImport] IDiscFormat2` so we get authoritative blank/finalized status before pressing the big red button. After that, v0.0.7 = multi-track from an M3U, then v0.0.8 wires the same flow into the **Burn Audio CD** GUI tile, and v0.1.0 is polish + safety checks.
 
 ---
 
 ## Running it
 
 ```powershell
-# What does the program think it is?
-dotnet run --project src/Futureburn.Cli
-
-# What optical drives does Windows see, and what can each one do?
+# Drives + capabilities
 dotnet run --project src/Futureburn.Cli -- drives
-
-# Show every profile and feature page the drive reports (raw codes included)
 dotnet run --project src/Futureburn.Cli -- drives -v
-
-# What's in drive F: right now?
 dotnet run --project src/Futureburn.Cli -- disc F:
+
+# Audio
+dotnet run --project src/Futureburn.Cli -- probe song.mp3
+dotnet run --project src/Futureburn.Cli -- decode song.mp3 song-cd.wav
+dotnet run --project src/Futureburn.Cli -- playlist mix.m3u8
 ```
 
 Sample `drives` output:
