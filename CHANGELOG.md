@@ -4,6 +4,21 @@ All notable changes to futureburn will land here. Format roughly follows [Keep a
 
 ## [Unreleased]
 
+## [0.0.22] — 2026-05-07
+
+### Added — proper DVD-Video authoring via dvdauthor
+DVD-Video discs that play in standalone hardware DVD players (PS4 etc.) require fully spec-compliant IFO files with TT_SRPT, VTS_PGCI, VTS_C_ADT, and VTS_VOBU_ADMAP — the last of which requires scanning the VOB for NAV packets to find every VOBU boundary. That's its own multi-session subsystem. Pragmatic answer for "make discs that work today": detect and shell out to `dvdauthor`, the canonical open-source DVD-Video authoring tool.
+- `Futureburn.Core/Tools/DvdauthorLocator.cs` — finds dvdauthor on PATH, Chocolatey, Scoop, common manual install paths.
+- `Futureburn.Core/Tools/DvdauthorRunner.cs` — invokes dvdauthor with a small XML control file describing one title (jumppad on, vmgm jump-to-title-1 trigger so the disc auto-plays on insert).
+- CLI `dvdauthor` command — reports presence/version (parallel to `ffmpeg`).
+- `dvdv-author` is now bifurcated:
+  - **dvdauthor mode** (default when dvdauthor is detected): ffmpeg → MPEG-PS → dvdauthor → real IFOs → hardware-playable disc.
+  - **Skeleton mode** (fallback): only fires when dvdauthor isn't installed, or you pass `--skeleton-only`. Same as v0.0.21's behavior — software-player-only.
+  - The chosen mode is announced in the output up front so you know what kind of disc you're getting.
+
+### Notes
+- dvdauthor is GPL — same licensing posture as ffmpeg. We don't bundle it; users install via `choco install dvdauthor`, `scoop install dvdauthor`, or the Sourceforge binary.
+
 ## [0.0.21] — 2026-05-07
 
 ### Added — DVD-Video authoring (experimental)

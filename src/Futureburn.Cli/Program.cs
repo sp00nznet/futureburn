@@ -30,6 +30,7 @@ return args[0].ToLowerInvariant() switch
     "cd-info"                      => CdInfo(args),
     "cd-lookup"                    => CdLookup(args),
     "ffmpeg"                       => FfmpegInfo(),
+    "dvdauthor"                    => DvdauthorInfo(),
     "validate-folder"              => ValidateFolder(args),
     "vcd-author"                   => VcdAuthorCommand(args),
     "dvdv-author"                  => DvdVideoAuthorCommand(args),
@@ -80,6 +81,7 @@ static int PrintUsage()
     Console.WriteLine("  futureburn cd-info <drive>            Read the disc's TOC: track listing, types, durations");
     Console.WriteLine("  futureburn cd-lookup <drive>          Compute the disc ID and look it up on MusicBrainz");
     Console.WriteLine("  futureburn ffmpeg                     Detect ffmpeg (foundation for video disc authoring)");
+    Console.WriteLine("  futureburn dvdauthor                  Detect dvdauthor (proper DVD-Video IFO authoring)");
     Console.WriteLine("  futureburn validate-folder <folder>   Recognize DVD-Video / DVD-Audio / VCD / SVCD / BD folder structures");
     Console.WriteLine("  futureburn vcd-author <input> <out>   Author a Video CD folder from a video file (experimental)");
     Console.WriteLine("    flags: --pal (default NTSC), --label NAME, --profile 1|2|3");
@@ -1128,24 +1130,26 @@ static int DvdVideoAuthorCommand(string[] args)
     {
         Console.WriteLine();
         Console.WriteLine("usage: futureburn dvdv-author <input-video> <output-folder> [--pal] [--label NAME]");
+        Console.WriteLine("                              [--skeleton-only]");
         Console.WriteLine();
-        Console.WriteLine("EXPERIMENTAL: produces a DVD-Video folder with VIDEO_TS\\ and AUDIO_TS\\,");
-        Console.WriteLine("  ffmpeg-transcoded VOB files, and SKELETON IFO/BUP files.");
+        Console.WriteLine("Produces a DVD-Video folder (VIDEO_TS\\ + empty AUDIO_TS\\) from a video file.");
         Console.WriteLine();
-        Console.WriteLine("  Will play in: VLC, MPC-HC, and other software players that");
-        Console.WriteLine("                read VOBs without strict IFO parsing.");
-        Console.WriteLine("  Probably WON'T play in: standalone DVD players, which read the");
-        Console.WriteLine("                          IFO tables to navigate.");
+        Console.WriteLine("Two modes, picked automatically:");
+        Console.WriteLine("  1. dvdauthor mode (preferred): if dvdauthor is installed, runs it after");
+        Console.WriteLine("     ffmpeg transcoding to produce real spec-compliant IFOs. The result");
+        Console.WriteLine("     plays in standalone DVD players (PS4, etc.).");
+        Console.WriteLine("  2. Skeleton mode (fallback): only ffmpeg transcoding + minimal IFO");
+        Console.WriteLine("     headers. VLC and software readers play it; hardware players don't.");
         Console.WriteLine();
-        Console.WriteLine("  For production-quality discs use DVDStyler, DVDFlick, or dvdauthor");
-        Console.WriteLine("  to author the IFOs, then `futureburn burn-folder <result> <drive>`.");
+        Console.WriteLine("Force skeleton mode for testing/debugging with --skeleton-only.");
         return 1;
     }
 
-    var input     = args[1];
-    var outFolder = args[2];
-    bool isPal    = HasFlag(args, "--pal");
-    var label     = FlagValue(args, "--label") ?? Path.GetFileNameWithoutExtension(input);
+    var input        = args[1];
+    var outFolder    = args[2];
+    bool isPal       = HasFlag(args, "--pal");
+    bool skeletonOnly = HasFlag(args, "--skeleton-only");
+    var label        = FlagValue(args, "--label") ?? Path.GetFileNameWithoutExtension(input);
 
     if (!File.Exists(input))
     {
@@ -1160,84 +1164,131 @@ static int DvdVideoAuthorCommand(string[] args)
         return 1;
     }
 
-    var videoTs = Path.Combine(outFolder, "VIDEO_TS");
-    var audioTs = Path.Combine(outFolder, "AUDIO_TS");
-    Directory.CreateDirectory(videoTs);
-    Directory.CreateDirectory(audioTs);   // required by spec, must exist even if empty
-
-    var vobPath = Path.Combine(videoTs, "VTS_01_1.VOB");
+    var dvdauthor = skeletonOnly
+        ? null
+        : Futureburn.Core.Tools.DvdauthorRunner.Locate();
+    bool useDvdauthor = dvdauthor is not null;
 
     Console.WriteLine();
     Console.WriteLine($"  Input:    {input}");
     Console.WriteLine($"  Output:   {outFolder}");
     Console.WriteLine($"  System:   {(isPal ? "PAL" : "NTSC")}");
     Console.WriteLine($"  Label:    {label}");
+    Console.WriteLine($"  Mode:     {(useDvdauthor ? "dvdauthor (real IFOs — plays in hardware players)" : "skeleton IFOs (VLC-only — install dvdauthor for real IFOs)")}");
+    if (!useDvdauthor && !skeletonOnly)
+    {
+        Console.WriteLine();
+        Console.WriteLine("  ℹ dvdauthor not detected. Run `futureburn dvdauthor` for install help.");
+    }
+
+    // Step 1 — ffmpeg transcode to a temp .mpg. dvdauthor consumes the .mpg
+    // and rewrites it as VOB(s) inside VIDEO_TS\; skeleton mode just renames
+    // it to VTS_01_1.VOB.
+    var tempMpg = Path.Combine(Path.GetTempPath(), $"futureburn-dvdv-{Guid.NewGuid():N}.mpg");
+
     Console.WriteLine();
     Console.WriteLine($"Transcoding via ffmpeg ({ffmpeg.VersionLine}) ...");
     Console.WriteLine($"  Target:   {(isPal ? "pal-dvd" : "ntsc-dvd")} (MPEG-2 video + AC-3 audio in DVD-PS)");
     Console.WriteLine();
 
-    // ffmpeg's -target presets: pal-dvd / ntsc-dvd. These set:
-    //   video = mpeg2video, 720x480 NTSC or 720x576 PAL, ~6000 kbps target
-    //   audio = ac3, 448 kbps stereo, 48 kHz
-    //   muxer = dvd
     var ffargs = new[]
     {
         "-y", "-i", input,
         "-target", isPal ? "pal-dvd" : "ntsc-dvd",
-        // Cap output at the DVD-Video per-VOB limit (1 GB - 1 sector). Beyond
-        // this we'd need to split into VTS_01_2.VOB, _3.VOB, etc. Doable but
-        // future work. Short content stays under this; full-length movies will
-        // truncate and warrant a "split into multiple VOBs" enhancement.
+        // Cap output at the DVD-Video per-VOB limit (1 GB - 1 sector).
         "-fs", "1073709056",
-        vobPath,
+        tempMpg,
     };
-
     var rr = ffmpeg.Run(ffargs, line =>
     {
         if (line.StartsWith("frame=") || line.Contains("Error") || line.StartsWith("[error]"))
             Console.WriteLine($"  {line}");
     });
 
-    if (rr.ExitCode != 0 || !File.Exists(vobPath))
+    if (rr.ExitCode != 0 || !File.Exists(tempMpg))
     {
         Console.Error.WriteLine();
         Console.Error.WriteLine($"ffmpeg failed (exit {rr.ExitCode}). Last lines of log:");
-        var tail = rr.CombinedLog.Split('\n').TakeLast(8);
-        foreach (var l in tail) Console.Error.WriteLine($"  {l}");
+        foreach (var l in rr.CombinedLog.Split('\n').TakeLast(8)) Console.Error.WriteLine($"  {l}");
+        try { File.Delete(tempMpg); } catch { }
         return 1;
     }
 
-    // Write skeleton IFO + BUP files. BUP is the spec-required exact backup
-    // copy of the IFO — players verify them against each other.
-    var vmg     = Futureburn.Core.Authoring.DvdIfoBuilder.BuildVmgIfo(numTitleSets: 1, providerId: label);
-    var vtsIfo  = Futureburn.Core.Authoring.DvdIfoBuilder.BuildVtsIfo();
-    File.WriteAllBytes(Path.Combine(videoTs, "VIDEO_TS.IFO"), vmg);
-    File.WriteAllBytes(Path.Combine(videoTs, "VIDEO_TS.BUP"), vmg);
-    File.WriteAllBytes(Path.Combine(videoTs, "VTS_01_0.IFO"), vtsIfo);
-    File.WriteAllBytes(Path.Combine(videoTs, "VTS_01_0.BUP"), vtsIfo);
+    var mpgSize = new FileInfo(tempMpg).Length;
+    Console.WriteLine($"  ffmpeg output: {FormatBytes(mpgSize)}");
 
-    var vobSize = new FileInfo(vobPath).Length;
+    try
+    {
+        if (useDvdauthor)
+        {
+            // Step 2a — dvdauthor on the MPG. Produces full VIDEO_TS\ with
+            // real IFOs/BUPs and properly-named VOBs. AUDIO_TS\ also created.
+            Console.WriteLine();
+            Console.WriteLine($"Authoring IFOs via dvdauthor ({dvdauthor!.VersionLine}) ...");
+            try
+            {
+                dvdauthor.AuthorSingleTitle(tempMpg, outFolder, line =>
+                {
+                    Console.WriteLine($"  {line}");
+                });
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine();
+                Console.Error.WriteLine($"dvdauthor failed: {ex.Message}");
+                return 1;
+            }
+        }
+        else
+        {
+            // Step 2b — skeleton mode. Move MPG into place, write skeleton IFOs.
+            var videoTs = Path.Combine(outFolder, "VIDEO_TS");
+            var audioTs = Path.Combine(outFolder, "AUDIO_TS");
+            Directory.CreateDirectory(videoTs);
+            Directory.CreateDirectory(audioTs);
+            var vobPath = Path.Combine(videoTs, "VTS_01_1.VOB");
+            File.Copy(tempMpg, vobPath, overwrite: true);
+
+            var vmg    = Futureburn.Core.Authoring.DvdIfoBuilder.BuildVmgIfo(numTitleSets: 1, providerId: label);
+            var vtsIfo = Futureburn.Core.Authoring.DvdIfoBuilder.BuildVtsIfo();
+            File.WriteAllBytes(Path.Combine(videoTs, "VIDEO_TS.IFO"), vmg);
+            File.WriteAllBytes(Path.Combine(videoTs, "VIDEO_TS.BUP"), vmg);
+            File.WriteAllBytes(Path.Combine(videoTs, "VTS_01_0.IFO"), vtsIfo);
+            File.WriteAllBytes(Path.Combine(videoTs, "VTS_01_0.BUP"), vtsIfo);
+        }
+    }
+    finally
+    {
+        try { File.Delete(tempMpg); } catch { }
+    }
+
+    // Summarize the result.
     Console.WriteLine();
     Console.WriteLine("--- Authoring complete ---");
-    Console.WriteLine($"  VTS_01_1.VOB:  {FormatBytes(vobSize)}");
-    Console.WriteLine($"  VIDEO_TS.IFO:  2048 bytes  (skeleton — no PGC / no chapters)");
-    Console.WriteLine($"  VIDEO_TS.BUP:  2048 bytes  (mirror of IFO)");
-    Console.WriteLine($"  VTS_01_0.IFO:  2048 bytes  (skeleton)");
-    Console.WriteLine($"  VTS_01_0.BUP:  2048 bytes  (mirror)");
-    Console.WriteLine($"  AUDIO_TS\\      empty (required by spec)");
+    var videoTsDir = Path.Combine(outFolder, "VIDEO_TS");
+    if (Directory.Exists(videoTsDir))
+    {
+        foreach (var fi in new DirectoryInfo(videoTsDir).GetFiles().OrderBy(f => f.Name))
+            Console.WriteLine($"  VIDEO_TS\\{fi.Name,-16} {FormatBytes(fi.Length)}");
+    }
+    var audioTsDir = Path.Combine(outFolder, "AUDIO_TS");
+    if (Directory.Exists(audioTsDir))
+    {
+        var atsFiles = new DirectoryInfo(audioTsDir).GetFiles();
+        Console.WriteLine($"  AUDIO_TS\\          ({atsFiles.Length} file(s)){(atsFiles.Length == 0 ? "  (empty per DVD-Video spec)" : "")}");
+    }
+
     Console.WriteLine();
     Console.WriteLine("To burn the resulting folder:");
     Console.WriteLine($"  futureburn burn-folder \"{outFolder}\" F: --label \"{label}\"");
-    Console.WriteLine();
-    Console.WriteLine("⚠ EXPERIMENTAL: skeleton IFOs only. The disc will play in VLC and other");
-    Console.WriteLine("  software DVD-Video readers (they accept the VOBs directly). Standalone");
-    Console.WriteLine("  hardware DVD players probably WON'T accept it — they navigate via the");
-    Console.WriteLine("  IFO tables we don't write yet (TT_SRPT, PGCI, VOBU address map, etc.).");
-    Console.WriteLine();
-    Console.WriteLine("  For production-quality DVD-Video discs that play in any player, author");
-    Console.WriteLine("  with a real tool (DVDStyler, DVDFlick, or command-line dvdauthor) and");
-    Console.WriteLine("  then burn the resulting VIDEO_TS folder with `burn-folder`.");
+    if (!useDvdauthor)
+    {
+        Console.WriteLine();
+        Console.WriteLine("⚠ Skeleton-IFO mode. The disc will play in VLC and other software DVD");
+        Console.WriteLine("  readers; standalone DVD players probably won't navigate it. Install");
+        Console.WriteLine("  dvdauthor (run `futureburn dvdauthor` for install commands) to make");
+        Console.WriteLine("  hardware-playable discs.");
+    }
     return 0;
 }
 
@@ -1348,6 +1399,38 @@ static int VcdAuthorCommand(string[] args)
     Console.WriteLine("  will play it. Older standalone VCD players that strictly require");
     Console.WriteLine("  multi-track CDs may not. Multi-track CD-data writing is a separate");
     Console.WriteLine("  future project.");
+    return 0;
+}
+
+static int DvdauthorInfo()
+{
+    Console.WriteLine();
+    Console.WriteLine("Looking for dvdauthor ...");
+    var info = Futureburn.Core.Tools.DvdauthorLocator.Locate();
+    if (info is null)
+    {
+        Console.WriteLine();
+        Console.WriteLine("  Not found.");
+        Console.WriteLine();
+        Console.WriteLine("  Install via one of:");
+        Console.WriteLine("    choco install dvdauthor");
+        Console.WriteLine("    scoop install dvdauthor   (extras bucket)");
+        Console.WriteLine("    https://dvdauthor.sourceforge.net/  (binary download)");
+        Console.WriteLine();
+        Console.WriteLine("  dvdauthor produces real spec-compliant DVD-Video IFO/BUP files");
+        Console.WriteLine("  with all the navigation tables (TT_SRPT, VTS_PGCI, VTS_C_ADT,");
+        Console.WriteLine("  VTS_VOBU_ADMAP) that standalone DVD players read. Without it,");
+        Console.WriteLine("  `dvdv-author` falls back to skeleton IFOs (VLC plays them, but");
+        Console.WriteLine("  hardware DVD players probably won't).");
+        return 1;
+    }
+
+    Console.WriteLine();
+    Console.WriteLine($"  Path:    {info.Path}");
+    Console.WriteLine($"  Version: {info.VersionLine}");
+    Console.WriteLine();
+    Console.WriteLine("  dvdauthor is available. `dvdv-author` will use it automatically");
+    Console.WriteLine("  to produce DVD-Video discs that play in standalone DVD players.");
     return 0;
 }
 
