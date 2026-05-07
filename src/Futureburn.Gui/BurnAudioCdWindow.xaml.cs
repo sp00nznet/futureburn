@@ -7,6 +7,7 @@ using System.Windows.Input;
 using Futureburn.Core.Audio;
 using Futureburn.Core.Imapi;
 using Futureburn.Core.Spti;
+using NAudio.Wave;
 
 namespace Futureburn.Gui;
 
@@ -15,7 +16,10 @@ public partial class BurnAudioCdWindow : Window
     public sealed class TrackItem
     {
         public required int Index           { get; set; }
-        public required string Title        { get; init; }
+        // Title is mutable so users can rename; the GridView binding doesn't update
+        // automatically without INotifyPropertyChanged, so we call TrackList.Items.Refresh()
+        // after a rename. Keeping this simple over wiring up INPC for one column.
+        public required string Title        { get; set; }
         public required string FullPath     { get; init; }
         public required TimeSpan Duration   { get; init; }
         public required AudioInfo Info      { get; init; }
@@ -29,12 +33,21 @@ public partial class BurnAudioCdWindow : Window
     private IReadOnlyList<OpticalDrive> _drives = Array.Empty<OpticalDrive>();
     private bool _burning;
 
+    // For drag-reorder within the track list.
+    private Point _dragStartPoint;
+    private TrackItem? _dragItem;
+
+    // Audio preview state (NAudio).
+    private IWavePlayer? _player;
+    private WaveStream? _playerReader;
+
     public BurnAudioCdWindow()
     {
         InitializeComponent();
         TrackList.ItemsSource = _tracks;
         _tracks.CollectionChanged += (_, _) => UpdateTotals();
         Loaded += (_, _) => RefreshDrives();
+        Closed += (_, _) => StopPlayback();
         // SpeedCombo affects the est-burn-time calculation in UpdateTotals.
         SpeedCombo.SelectionChanged += (_, _) => UpdateTotals();
         UpdateTotals();
@@ -301,6 +314,124 @@ public partial class BurnAudioCdWindow : Window
         for (int i = 0; i < _tracks.Count; i++)
             _tracks[i].Index = i + 1;
         TrackList.Items.Refresh();
+    }
+
+    // ---- Rename ----------------------------------------------------------
+
+    private void Rename_Click(object sender, RoutedEventArgs e) => RenameSelected();
+
+    private void TrackList_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.F2) { RenameSelected(); e.Handled = true; }
+    }
+
+    private void TrackList_MouseDoubleClick(object sender, MouseButtonEventArgs e)
+    {
+        if (TrackList.SelectedItem is TrackItem) { RenameSelected(); e.Handled = true; }
+    }
+
+    private void RenameSelected()
+    {
+        if (TrackList.SelectedItem is not TrackItem t) return;
+        var dlg = new TextInputDialog("Rename track", "Title:", t.Title) { Owner = this };
+        if (dlg.ShowDialog() != true) return;
+        t.Title = dlg.Value;
+        TrackList.Items.Refresh();
+    }
+
+    // ---- Audio preview ---------------------------------------------------
+
+    private void Play_Click(object sender, RoutedEventArgs e)
+    {
+        if (TrackList.SelectedItem is not TrackItem t) return;
+        StopPlayback();
+        try
+        {
+            // MediaFoundationReader handles all formats Windows knows about
+            // (MP3, M4A, AAC, WMA, FLAC, plus WAV).
+            _playerReader = new MediaFoundationReader(t.FullPath);
+            _player = new WaveOutEvent();
+            _player.PlaybackStopped += (_, _) => Dispatcher.Invoke(StopPlayback);
+            _player.Init(_playerReader);
+            _player.Play();
+            PlayBtn.IsEnabled = false;
+            StopBtn.IsEnabled = true;
+            StatusText.Text = $"Playing: {t.Title}";
+        }
+        catch (Exception ex)
+        {
+            StopPlayback();
+            MessageBox.Show(this, ex.Message, "Playback failed",
+                MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    private void Stop_Click(object sender, RoutedEventArgs e) => StopPlayback();
+
+    private void StopPlayback()
+    {
+        try { _player?.Stop(); } catch { }
+        _player?.Dispose();
+        _playerReader?.Dispose();
+        _player       = null;
+        _playerReader = null;
+        PlayBtn.IsEnabled = true;
+        StopBtn.IsEnabled = false;
+    }
+
+    // ---- Drag-reorder within the track list ------------------------------
+
+    private void TrackList_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        _dragStartPoint = e.GetPosition(null);
+        // Find the row under the cursor (if any) so we can drag it later.
+        var hit = e.OriginalSource as DependencyObject;
+        while (hit is not null && hit is not ListViewItem) hit = System.Windows.Media.VisualTreeHelper.GetParent(hit);
+        _dragItem = (hit as ListViewItem)?.DataContext as TrackItem;
+    }
+
+    private void TrackList_PreviewMouseMove(object sender, MouseEventArgs e)
+    {
+        if (_dragItem is null || e.LeftButton != MouseButtonState.Pressed) return;
+        var pt = e.GetPosition(null);
+        // Wait until the cursor has moved past the system drag threshold.
+        if (Math.Abs(pt.X - _dragStartPoint.X) < SystemParameters.MinimumHorizontalDragDistance
+         && Math.Abs(pt.Y - _dragStartPoint.Y) < SystemParameters.MinimumVerticalDragDistance)
+            return;
+
+        var data = new DataObject("FuturreburnTrack", _dragItem);
+        DragDrop.DoDragDrop(TrackList, data, DragDropEffects.Move);
+        _dragItem = null;
+    }
+
+    private void TrackList_DragOver(object sender, DragEventArgs e)
+    {
+        // Only accept our own internal track drags as Move; anything else
+        // (file drops onto the list) is bubbled up to the Window's Drop handler.
+        e.Effects = e.Data.GetDataPresent("FuturreburnTrack")
+            ? DragDropEffects.Move
+            : DragDropEffects.None;
+        e.Handled = true;
+    }
+
+    private void TrackList_DropOnList(object sender, DragEventArgs e)
+    {
+        if (!e.Data.GetDataPresent("FuturreburnTrack")) return;
+        var src = (TrackItem)e.Data.GetData("FuturreburnTrack");
+        int oldIdx = _tracks.IndexOf(src);
+        if (oldIdx < 0) return;
+
+        // Find the row we dropped onto.
+        var hit = e.OriginalSource as DependencyObject;
+        while (hit is not null && hit is not ListViewItem) hit = System.Windows.Media.VisualTreeHelper.GetParent(hit);
+        var targetItem = (hit as ListViewItem)?.DataContext as TrackItem;
+
+        int newIdx = targetItem is null ? _tracks.Count - 1 : _tracks.IndexOf(targetItem);
+        if (newIdx < 0 || newIdx == oldIdx) return;
+        _tracks.Move(oldIdx, newIdx);
+        Renumber();
+        TrackList.SelectedIndex = newIdx;
+        e.Handled = true;
     }
 
     private void UpdateTotals()

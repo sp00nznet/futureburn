@@ -17,7 +17,12 @@
       <Separator/>
       <Button x:Name="MoveUpBtn"   Content="Move up"   Click="MoveUp_Click"   Padding="10,4"/>
       <Button x:Name="MoveDownBtn" Content="Move down" Click="MoveDown_Click" Padding="10,4"/>
+      <Button x:Name="RenameBtn"   Content="Rename"    Click="Rename_Click"   Padding="10,4"/>
       <Button x:Name="RemoveBtn"   Content="Remove"    Click="Remove_Click"   Padding="10,4"/>
+      <Separator/>
+      <Button x:Name="PlayBtn" Content="▶ Play" Click="Play_Click" Padding="10,4"/>
+      <Button x:Name="StopBtn" Content="■ Stop" Click="Stop_Click" Padding="10,4" IsEnabled="False"/>
+      <Separator/>
       <Button Content="Save M3U8..."   Click="SaveM3U_Click"   Padding="10,4"/>
       <Separator/>
       <TextBlock Text="Drive:" VerticalAlignment="Center" Margin="6,0,4,0"/>
@@ -55,7 +60,14 @@
         <RowDefinition Height="Auto"/>
       </Grid.RowDefinitions>
 
-      <ListView Grid.Row="0" x:Name="TrackList">
+      <ListView Grid.Row="0" x:Name="TrackList"
+                AllowDrop="True"
+                PreviewMouseLeftButtonDown="TrackList_PreviewMouseLeftButtonDown"
+                PreviewMouseMove="TrackList_PreviewMouseMove"
+                DragOver="TrackList_DragOver"
+                Drop="TrackList_DropOnList"
+                MouseDoubleClick="TrackList_MouseDoubleClick"
+                KeyDown="TrackList_KeyDown">
         <ListView.View>
           <GridView>
             <GridView.Columns>
