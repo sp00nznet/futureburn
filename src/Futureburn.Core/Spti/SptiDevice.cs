@@ -54,6 +54,28 @@ public sealed class SptiDevice : IDisposable
 
     public sealed record InquiryResult(string Vendor, string Product, string Revision);
 
+    public sealed record TocTrack(
+        int Number,
+        bool IsAudio,
+        bool HasPreemphasis,
+        int StartLba,
+        int LengthLba)
+    {
+        public TimeSpan Duration => TimeSpan.FromSeconds(LengthLba / 75.0);
+        public string TypeLabel => IsAudio ? "audio" + (HasPreemphasis ? " (pre-emph)" : "") : "data";
+    }
+
+    public sealed record DiscToc(
+        int FirstTrackNumber,
+        int LastTrackNumber,
+        int LeadOutLba,
+        IReadOnlyList<TocTrack> Tracks)
+    {
+        public TimeSpan TotalDuration => TimeSpan.FromSeconds(LeadOutLba / 75.0);
+        public bool HasAudio => Tracks.Any(t => t.IsAudio);
+        public bool HasData  => Tracks.Any(t => !t.IsAudio);
+    }
+
     /// <summary>
     /// MMC INQUIRY (opcode 0x12) — returns standard inquiry data including
     /// vendor / product / firmware revision strings. Always supported by every
@@ -76,6 +98,71 @@ public sealed class SptiDevice : IDisposable
         string product  = Encoding.ASCII.GetString(data, 16, 16).Trim();
         string revision = Encoding.ASCII.GetString(data, 32, 4).Trim();
         return new InquiryResult(vendor, product, revision);
+    }
+
+    /// <summary>
+    /// MMC READ TOC/PMA/ATIP (opcode 0x43) format 0 — the standard track listing.
+    /// Returns first/last track numbers, lead-out position, and per-track LBA + type.
+    /// Works on any CD with a readable TOC: audio CDs, data CDs, mixed-mode discs.
+    /// </summary>
+    public DiscToc ReadToc()
+    {
+        // Two-step read: first 4 bytes for the length header, then the full payload.
+        var header = new byte[4];
+        var cdb = new byte[10];
+        cdb[0] = MmcOpcodes.ReadTocPmaAtip;
+        cdb[1] = 0x00;     // LBA format (not MSF)
+        cdb[2] = 0x00;     // Format 0 = standard TOC
+        cdb[6] = 0x01;     // Starting track number
+        cdb[7] = 0;        // allocation length high
+        cdb[8] = 4;        // allocation length low — just the header
+        SendScsi(cdb, cdbLength: 10, header, dataIn: true);
+
+        // Bytes 0-1 = TOC data length (size of remaining payload, big-endian).
+        int payloadLen = (header[0] << 8) | header[1];
+        int totalLen = payloadLen + 2;  // include the two length bytes themselves
+
+        var data = new byte[totalLen];
+        cdb[7] = (byte)(totalLen >> 8);
+        cdb[8] = (byte)(totalLen & 0xFF);
+        SendScsi(cdb, cdbLength: 10, data, dataIn: true);
+
+        int firstTrack = data[2];
+        int lastTrack  = data[3];
+
+        // Each entry is 8 bytes starting at offset 4.
+        var tracks = new List<TocTrack>();
+        int leadOutLba = 0;
+        for (int i = 4; i + 7 < totalLen; i += 8)
+        {
+            byte control  = (byte)(data[i + 1] & 0x0F);
+            byte trackNum = data[i + 2];
+            int lba = (data[i + 4] << 24) | (data[i + 5] << 16)
+                    | (data[i + 6] << 8)  |  data[i + 7];
+
+            if (trackNum == 0xAA)
+            {
+                // Lead-out marker — gives us the total disc size.
+                leadOutLba = lba;
+            }
+            else
+            {
+                // Control bits: bit 2 set = data track; bit 0 = pre-emphasis (audio only).
+                bool isAudio = (control & 0x04) == 0;
+                bool preemph = isAudio && (control & 0x01) != 0;
+                tracks.Add(new TocTrack(trackNum, isAudio, preemph, lba, 0));
+            }
+        }
+
+        // Track length = next-track-start-LBA minus this-track-start-LBA. Last
+        // real track's length runs to the lead-out.
+        for (int i = 0; i < tracks.Count; i++)
+        {
+            int nextLba = (i + 1 < tracks.Count) ? tracks[i + 1].StartLba : leadOutLba;
+            tracks[i] = tracks[i] with { LengthLba = Math.Max(0, nextLba - tracks[i].StartLba) };
+        }
+
+        return new DiscToc(firstTrack, lastTrack, leadOutLba, tracks);
     }
 
     /// <summary>

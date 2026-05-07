@@ -23,6 +23,7 @@ return args[0].ToLowerInvariant() switch
     "burn"                         => BurnCommand(args),
     "imapi-v1-info"                => ImapiV1Info(),
     "spti-info"                    => SptiInfo(args),
+    "cd-info"                      => CdInfo(args),
     "help" or "--help" or "-h"     => PrintUsage(),
     _                              => Unknown(args[0]),
 };
@@ -57,6 +58,7 @@ static int PrintUsage()
     Console.WriteLine();
     Console.WriteLine("  futureburn imapi-v1-info              Diagnose whether IMAPI v1 works here");
     Console.WriteLine("  futureburn spti-info <drive>          SCSI INQUIRY via SPTI (proves the SPTI path works)");
+    Console.WriteLine("  futureburn cd-info <drive>            Read the disc's TOC: track listing, types, durations");
     Console.WriteLine();
     Console.WriteLine("audio formats: " + string.Join(", ", AudioDecoder.SupportedExtensions));
     return 0;
@@ -505,6 +507,49 @@ static int SptiInfo(string[] args)
     catch (Exception ex)
     {
         Console.Error.WriteLine($"SPTI failed: {ex.Message}");
+        return 1;
+    }
+}
+
+static int CdInfo(string[] args)
+{
+    if (args.Length < 2 || args[1].Length < 1 || !char.IsLetter(args[1][0]))
+    {
+        Console.WriteLine();
+        Console.WriteLine("usage: futureburn cd-info <drive>");
+        Console.WriteLine("  e.g. futureburn cd-info F");
+        return 1;
+    }
+    char letter = char.ToUpperInvariant(args[1][0]);
+    Console.WriteLine();
+    Console.WriteLine($"Reading TOC from {letter}:\\ ...");
+    try
+    {
+        using var dev = Futureburn.Core.Spti.SptiDevice.OpenDriveLetter(letter);
+        var inq = dev.Inquiry();
+        Console.WriteLine($"  Drive: {inq.Vendor} {inq.Product} ({inq.Revision})");
+        var toc = dev.ReadToc();
+        Console.WriteLine();
+        Console.WriteLine($"  Tracks {toc.FirstTrackNumber}-{toc.LastTrackNumber} " +
+                          $"({toc.Tracks.Count} total), lead-out at LBA {toc.LeadOutLba:N0}");
+        var typeLabel = toc.HasAudio && toc.HasData ? "Mixed-mode (audio + data)"
+                       : toc.HasAudio                ? "Audio CD"
+                                                     : "Data disc";
+        Console.WriteLine($"  Disc type: {typeLabel}");
+        Console.WriteLine($"  Total time: {toc.TotalDuration:hh\\:mm\\:ss}");
+        Console.WriteLine();
+        Console.WriteLine("   #   Type             Start LBA       Length      Duration");
+        Console.WriteLine("  --  ---------------  ------------  ------------  --------");
+        foreach (var t in toc.Tracks)
+        {
+            Console.WriteLine($"  {t.Number,2}  {t.TypeLabel,-15}  {t.StartLba,12:N0}  {t.LengthLba,12:N0}  {t.Duration:mm\\:ss}");
+        }
+        return 0;
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine();
+        Console.Error.WriteLine($"cd-info failed: {ex.Message}");
         return 1;
     }
 }

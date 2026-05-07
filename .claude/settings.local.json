@@ -19,7 +19,8 @@
       "Read(//e/cd/spotify-download/wav/**)",
       "PowerShell(Get-ItemProperty *)",
       "PowerShell(Get-ChildItem 'HKLM:\\\\SOFTWARE\\\\Classes\\\\Interface' -ErrorAction SilentlyContinue | Where-Object { $n = $_.GetValue\\(''\\); $n -in 'IDiscRecorder2','IDiscFormat2','IDiscFormat2TrackAtOnce','IDiscFormat2Data','IDiscMaster2' } | ForEach-Object { \"$\\($_.GetValue\\(''\\)\\) = $\\($_.PSChildName\\)\" })",
-      "Bash(powershell -NoProfile -Command \"Get-Volume -DriveLetter F | Format-List FileSystemLabel,FileSystem,Size,SizeRemaining,DriveType\")"
+      "Bash(powershell -NoProfile -Command \"Get-Volume -DriveLetter F | Format-List FileSystemLabel,FileSystem,Size,SizeRemaining,DriveType\")",
+      "Bash(powershell -NoProfile -Command \"Get-Volume -DriveLetter F | Format-List FileSystemLabel,FileSystem,Size,DriveType\")"
     ]
   }
 }

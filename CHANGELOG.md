@@ -4,6 +4,14 @@ All notable changes to futureburn will land here. Format roughly follows [Keep a
 
 ## [Unreleased]
 
+## [0.0.8] — 2026-05-06
+
+### Added
+- `SptiDevice.ReadToc()` + `cd-info <drive>` CLI command. SCSI READ TOC/PMA/ATIP via SPTI. Returns first/last track numbers, lead-out LBA, plus per-track type (audio vs data, with pre-emphasis flag), start LBA, length, and duration. Works on any CD with a readable TOC — audio CDs, mixed-mode, finalized CD-Rs.
+
+### Validated
+- Read the puck disc (a finalized 19-track audio CD that CDBurnerXP burned from the user's same playlist earlier). Result: 19 audio tracks, lead-out at LBA 281,457, total 01:02:32. **Matches our Plan() output for the same playlist track-for-track.** End-to-end proof that our pipeline computes the right disc layout.
+
 ## [0.0.7] — 2026-05-06
 
 ### Added
