@@ -1227,7 +1227,7 @@ static int DvdVideoAuthorCommand(string[] args)
             Console.WriteLine($"Authoring IFOs via dvdauthor ({dvdauthor!.VersionLine}) ...");
             try
             {
-                dvdauthor.AuthorSingleTitle(tempMpg, outFolder, line =>
+                dvdauthor.AuthorSingleTitle(tempMpg, outFolder, isPal: isPal, aspectRatio: "4:3", onLog: line =>
                 {
                     Console.WriteLine($"  {line}");
                 });

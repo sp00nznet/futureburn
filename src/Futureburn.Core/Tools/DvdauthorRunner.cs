@@ -52,11 +52,13 @@ public sealed class DvdauthorRunner
     public void AuthorSingleTitle(
         string mpegInputPath,
         string outputFolder,
+        bool isPal = false,
+        string aspectRatio = "4:3",
         Action<string>? onLog = null)
     {
         // Build the XML control file. dvdauthor accepts XML via -x; each path
         // in the XML can be absolute. We escape any awkward characters.
-        var xml = BuildSingleTitleXml(outputFolder, mpegInputPath);
+        var xml = BuildSingleTitleXml(outputFolder, mpegInputPath, isPal, aspectRatio);
 
         var xmlPath = Path.Combine(Path.GetTempPath(), $"futureburn-dvdauthor-{Guid.NewGuid():N}.xml");
         File.WriteAllText(xmlPath, xml);
@@ -95,18 +97,27 @@ public sealed class DvdauthorRunner
         }
     }
 
-    public static string BuildSingleTitleXml(string outputFolder, string mpegInput)
+    public static string BuildSingleTitleXml(
+        string outputFolder, string mpegInput, bool isPal = false, string aspectRatio = "4:3")
     {
-        // Minimal: one VMG with a jump-to-title-1 trigger so the disc
-        // auto-plays the title on insert. One title set with one PGC
-        // containing the VOB.
-        // jumppad="yes" makes dvdauthor add the small connector logic
-        // that makes the disc actually start playing in standalone players.
+        // We need a <vmgm> section so dvdauthor runs its second pass and
+        // produces VIDEO_TS.IFO/BUP (the master Volume Manager files). The
+        // <vmgm><menus> needs <video format="..."> declared or dvdauthor
+        // bails with "no video format specified for VMGM".
+        //
+        // The single PGC inside is a stub that just `jump title 1;`s — so
+        // when the disc loads, the player runs the VMGM, which immediately
+        // hands off to the title. That's the "auto-play on insert" behavior
+        // standalone DVD players (PS4 etc.) expect.
+        //
+        // jumppad="yes" makes dvdauthor insert the small connector cells
+        // some players want for clean transitions.
         var sb = new StringBuilder();
         sb.AppendLine("<?xml version=\"1.0\"?>");
-        sb.AppendLine($"<dvdauthor jumppad=\"yes\">");
+        sb.AppendLine("<dvdauthor jumppad=\"yes\">");
         sb.AppendLine("  <vmgm>");
         sb.AppendLine("    <menus>");
+        sb.AppendLine($"      <video format=\"{(isPal ? "pal" : "ntsc")}\" aspect=\"{aspectRatio}\"/>");
         sb.AppendLine("      <pgc entry=\"title\">");
         sb.AppendLine("        <pre>jump title 1;</pre>");
         sb.AppendLine("      </pgc>");
