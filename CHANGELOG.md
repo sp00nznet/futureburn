@@ -4,6 +4,28 @@ All notable changes to futureburn will land here. Format roughly follows [Keep a
 
 ## [Unreleased]
 
+## [0.0.17] — 2026-05-06
+
+### Added
+- **BIN/CUE data-mode burning.** New `Futureburn.Core/Image/{CueSheet,CueSheetParser,BinCueImageStream}.cs`:
+  - `CueSheetParser` is a minimal text-mode .cue parser. Single-FILE sheets only. Supports `MODE1/2048`, `MODE1/2352`, and `AUDIO` track types; silently ignores `PERFORMER` / `TITLE` / `REM` etc.
+  - `BinCueImageStream` exposes a `.bin`'s user-data portion as a 2048-byte-per-sector stream — for `MODE1/2352` it strips the 12-byte sync + 4-byte header and 288-byte ECC per sector and emits just the 2048-byte payload, so downstream code is identical to ISO burning.
+  - `SptiDataBurner.Plan()` now detects `.cue` extensions and resolves to the referenced `.bin`. Audio BIN/CUE is rejected with a clear message (on the roadmap).
+  - `burn-iso` CLI command accepts `.cue` files transparently — no separate command needed.
+- **MusicBrainz disc lookup.** New `Futureburn.Core/Net/MusicBrainz.cs` computes the canonical MB disc ID from a TOC (SHA-1 over the standard hex-string format, with the URL-safe base64 substitutions `+ → .`, `/ → _`, `= → -`) and queries the public MB API at `/ws/2/discid/{id}`. Parses the JSON response into typed releases + tracks, handles multi-artist `joinphrase` fields. CLI: `cd-lookup <drive>`.
+- 17 new unit tests across `CueSheetParserTests` (8) and `MusicBrainzTests` (9) — total 68 tests.
+
+### Validated
+- Live MusicBrainz lookup on the audio CD currently in F:\ correctly identified it as **OutKast — Aquemini** (16 tracks, 1998), with full per-track titles. Algorithm matches the documented MB spec exactly.
+
+### Notes — explicitly deferred
+This commit was driven by a request that included DVD-Video and DVD-Audio authoring. Those are full subsystems on their own:
+- **DVD-Video from MKV** = MPEG-2 video transcoding + AC-3 / LPCM audio transcoding + IFO/BUP/VOB authoring + UDF burn. Realistically requires ffmpeg integration. Months, not weeks.
+- **DVD-Audio from album** = LPCM AOB authoring + ATS_##_#.IFO authoring. Smaller than DVD-Video but still substantial; obscure tooling.
+- **NRG / MDS / CDI / CCD** image formats — each is a proprietary container with its own header format. Doable but lower priority than BIN/CUE which we just added.
+
+For DVD-Video and DVD-Audio burning *today*: author the `VIDEO_TS` / `AUDIO_TS` folder structure with an external tool, then `burn-folder` it — the IMAPI UDF generator handles the file system and the disc plays itself in standalone players.
+
 ## [0.0.16] — 2026-05-06
 
 ### Added

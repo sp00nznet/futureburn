@@ -28,6 +28,7 @@ return args[0].ToLowerInvariant() switch
     "imapi-v1-info"                => ImapiV1Info(),
     "spti-info"                    => SptiInfo(args),
     "cd-info"                      => CdInfo(args),
+    "cd-lookup"                    => CdLookup(args),
     "finalize"                     => FinalizeDisc(args),
     "eject"                        => EjectDrive(args),
     "load"                         => LoadDrive(args),
@@ -73,6 +74,7 @@ static int PrintUsage()
     Console.WriteLine("  futureburn imapi-v1-info              Diagnose whether IMAPI v1 works here");
     Console.WriteLine("  futureburn spti-info <drive>          SCSI INQUIRY via SPTI (proves the SPTI path works)");
     Console.WriteLine("  futureburn cd-info <drive>            Read the disc's TOC: track listing, types, durations");
+    Console.WriteLine("  futureburn cd-lookup <drive>          Compute the disc ID and look it up on MusicBrainz");
     Console.WriteLine("  futureburn finalize <drive>           CLOSE SESSION on a disc with open tracks (salvage operation)");
     Console.WriteLine("  futureburn eject <drive>              Eject the drive tray");
     Console.WriteLine("  futureburn load <drive>               Close (load) the drive tray");
@@ -1080,6 +1082,90 @@ static int LoadDrive(string[] args)
         Console.Error.WriteLine($"load failed: {ex.Message}");
         return 1;
     }
+}
+
+static int CdLookup(string[] args)
+{
+    if (args.Length < 2 || args[1].Length < 1 || !char.IsLetter(args[1][0]))
+    {
+        Console.WriteLine("\nusage: futureburn cd-lookup <drive>");
+        return 1;
+    }
+    char letter = char.ToUpperInvariant(args[1][0]);
+
+    string discId;
+    Futureburn.Core.Spti.SptiDevice.DiscToc toc;
+    try
+    {
+        using var dev = Futureburn.Core.Spti.SptiDevice.OpenDriveLetter(letter);
+        toc = dev.ReadToc();
+        if (toc.Tracks.Count == 0)
+        {
+            Console.Error.WriteLine("Disc has no readable TOC.");
+            return 1;
+        }
+        var startLbas = toc.Tracks.Select(t => t.StartLba).ToArray();
+        discId = Futureburn.Core.Net.MusicBrainz.ComputeDiscId(startLbas, toc.LeadOutLba);
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"Couldn't read TOC: {ex.Message}");
+        return 1;
+    }
+
+    Console.WriteLine();
+    Console.WriteLine($"  Disc ID:    {discId}");
+    Console.WriteLine($"  MB lookup:  https://musicbrainz.org/ws/2/discid/{discId}?inc=artists+recordings");
+    Console.WriteLine();
+    Console.WriteLine("Querying MusicBrainz ...");
+
+    Futureburn.Core.Net.MusicBrainz.MbLookupResult result;
+    try
+    {
+        var version = System.Reflection.Assembly.GetExecutingAssembly()
+            .GetCustomAttribute<System.Reflection.AssemblyInformationalVersionAttribute>()?.InformationalVersion
+            ?? "0.0.0";
+        var ua = $"futureburn/{version} ( https://github.com/sp00nznet/futureburn )";
+        result = Futureburn.Core.Net.MusicBrainz.LookupAsync(discId, ua).GetAwaiter().GetResult();
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"Lookup failed: {ex.Message}");
+        return 1;
+    }
+
+    if (!result.Found)
+    {
+        Console.WriteLine();
+        Console.WriteLine("No matching release in MusicBrainz. The disc isn't in the database");
+        Console.WriteLine("(or the TOC differs from any known pressing of it).");
+        return 0;
+    }
+
+    Console.WriteLine();
+    Console.WriteLine($"Found {result.Releases.Count} release{(result.Releases.Count == 1 ? "" : "s")}:");
+    int relIdx = 1;
+    foreach (var rel in result.Releases)
+    {
+        Console.WriteLine();
+        Console.WriteLine($"  [{relIdx}] {rel.Artist}");
+        Console.WriteLine($"      {rel.Title}{(rel.Date is null ? "" : "  (" + rel.Date + ")")}");
+        Console.WriteLine($"      MB id: {rel.Id}");
+        if (rel.Tracks.Count > 0)
+        {
+            Console.WriteLine();
+            Console.WriteLine("       #   Title                                                Duration");
+            Console.WriteLine("      --   ---------------------------------------------------  --------");
+            foreach (var t in rel.Tracks)
+            {
+                var title = t.Title.Length > 50 ? t.Title.Substring(0, 47) + "..." : t.Title;
+                var dur   = t.Duration is { } d ? d.ToString(@"mm\:ss") : "  ?  ";
+                Console.WriteLine($"      {t.Number,2}   {title,-50}  {dur}");
+            }
+        }
+        relIdx++;
+    }
+    return 0;
 }
 
 static int FinalizeDisc(string[] args)

@@ -31,14 +31,50 @@ public static class SptiDataBurner
     public sealed record DataBurnPlan(
         OpticalDrive Drive,
         string ImagePath,
+        // For BIN/CUE inputs this is the path to the .bin (resolved from the
+        // .cue's FILE directive). For ISOs it's the path passed in.
+        string ActualBinaryPath,
         long ImageBytes,
         long ImageSectors,
-        bool IsDvd);
+        bool IsDvd,
+        bool IsBinCue);
 
     public static DataBurnPlan Plan(OpticalDrive drive, string imagePath)
     {
         if (!File.Exists(imagePath))
             throw new AudioCdBurner.BurnException($"Image file not found: {imagePath}");
+
+        // BIN/CUE detection: if the user hands us a .cue we parse it and use
+        // its referenced .bin. We currently only support single-data-track
+        // BIN/CUE pairs (ISO-equivalent). Audio BIN/CUE comes later.
+        bool isBinCue = imagePath.EndsWith(".cue", StringComparison.OrdinalIgnoreCase);
+        string actualBin = imagePath;
+        long imageBytes;
+        long imageSectors;
+        if (isBinCue)
+        {
+            var cue = Image.CueSheetParser.Parse(imagePath);
+            if (!cue.IsSingleDataTrack)
+                throw new AudioCdBurner.BurnException(
+                    "BIN/CUE burning currently supports single-data-track sheets only " +
+                    "(MODE1/2048 or MODE1/2352). Audio CD BIN/CUE is on the roadmap.");
+            var t = cue.Tracks[0];
+            actualBin   = cue.BinFile;
+            if (!File.Exists(actualBin))
+                throw new AudioCdBurner.BurnException(
+                    $"BIN file referenced by cue sheet not found: {actualBin}");
+            // Logical sectors = bin length divided by per-sector size, but the
+            // burnable payload is always 2048 bytes per logical sector.
+            var binLen = new FileInfo(actualBin).Length;
+            imageSectors = binLen / t.SectorBytes;
+            imageBytes   = imageSectors * 2048;
+        }
+        else
+        {
+            var fi = new FileInfo(imagePath);
+            imageBytes   = fi.Length;
+            imageSectors = (imageBytes + DataSectorBytes - 1) / DataSectorBytes;
+        }
 
         var profileCode = drive.CurrentProfiles.FirstOrDefault(p => p.Code != 0)?.Code ?? 0;
         if (profileCode == 0)
@@ -57,10 +93,14 @@ public static class SptiDataBurner
                 "Image burning currently supports CD-R/CD-RW and DVD-R/RW/+R/+RW.");
         }
 
-        var fi = new FileInfo(imagePath);
-        long imageSectors = (fi.Length + DataSectorBytes - 1) / DataSectorBytes;
-
-        return new DataBurnPlan(drive, imagePath, fi.Length, imageSectors, isDvd);
+        return new DataBurnPlan(
+            Drive:            drive,
+            ImagePath:        imagePath,
+            ActualBinaryPath: actualBin,
+            ImageBytes:       imageBytes,
+            ImageSectors:     imageSectors,
+            IsDvd:            isDvd,
+            IsBinCue:         isBinCue);
     }
 
     public static void ExecuteBurn(DataBurnPlan plan,
@@ -109,7 +149,21 @@ public static class SptiDataBurner
         const int chunkSectors = 32;
         var buffer = new byte[chunkSectors * DataSectorBytes];
 
-        using var stream = File.OpenRead(plan.ImagePath);
+        // For BIN/CUE input, BinCueImageStream presents the .bin's user-data
+        // portion as a plain 2048-byte-per-sector stream.
+        Stream stream;
+        if (plan.IsBinCue)
+        {
+            var cue = Image.CueSheetParser.Parse(plan.ImagePath);
+            var t   = cue.Tracks[0];
+            stream  = new Image.BinCueImageStream(plan.ActualBinaryPath, t.Mode, t.SectorBytes);
+        }
+        else
+        {
+            stream = File.OpenRead(plan.ImagePath);
+        }
+        using (stream)
+        {
         int currentLba = 0;
         long sectorsRemaining = plan.ImageSectors;
         long bytesWritten = 0;
@@ -150,6 +204,7 @@ public static class SptiDataBurner
             bytesWritten     += Math.Min(got, plan.ImageBytes - (bytesWritten));
             onProgress?.Invoke(bytesWritten, plan.ImageBytes);
         }
+        }  // using stream
 
         try { dev.SynchronizeCache(); }
         catch (Exception ex)
