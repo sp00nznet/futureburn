@@ -4,6 +4,27 @@ All notable changes to futureburn will land here. Format roughly follows [Keep a
 
 ## [Unreleased]
 
+## [0.0.20] — 2026-05-06
+
+### Added — Burn Audio CD GUI polish (part 1)
+- **Drag-reorder** in the track list. Custom WPF DragDrop with our own `"FuturreburnTrack"` data format (so it doesn't conflict with the Window-level Drop that accepts files / folders / playlists). DragOver shows Move; Drop computes the target row and reorders the ObservableCollection.
+- **Rename**: F2 on a selected row, double-click, or the new "Rename" toolbar button — opens a small reusable `TextInputDialog` seeded with the current title. Made `TrackItem.Title` mutable to support live updates.
+- **Audio preview**: ▶ Play / ■ Stop toolbar buttons, NAudio `MediaFoundationReader` + `WaveOutEvent`. Auto-resets on PlaybackStopped. Disposes on window close.
+
+### Added — VCD authoring (part 2, experimental)
+- `Futureburn.Core/Authoring/VcdInfoBuilder.cs` and `VcdEntriesBuilder.cs` write the binary 2048-byte `INFO.VCD` and `ENTRIES.VCD` files per the VCD 2.0 White Book layout. ToBcd + LbaToMsfBcd helpers handle the CD-time conversions.
+- `vcd-author <input-video> <output-folder>` CLI command. Locates ffmpeg, runs `-target ntsc-vcd` (or `pal-vcd` with `--pal`) to transcode the input to MPEG-1 video + MP2 audio in MPEG-PS, places the result at `MPEGAV/AVSEQ01.DAT`, and writes the `VCD/INFO.VCD` + `VCD/ENTRIES.VCD` companions. Result can be `burn-folder`'d.
+
+### Validated
+- Synthetic 5-second 320×240 test video → ffmpeg → 846.54 KB AVSEQ01.DAT (MPEG-1 + MP2 muxed). INFO.VCD + ENTRIES.VCD both 2048 bytes. `validate-folder` recognizes the result as a well-formed VideoCd structure.
+
+### Tests
+- 12 new `VcdBuilderTests` (signature/length checks, profile/version, album-label padding + truncation, BE16 volume fields, PAL flag, BCD encoder, LBA→MSF). Total 101 tests.
+
+### Honestly deferred
+- **CD-Text writing** was on the same request batch but is a separate ~300+ line subsystem (binary subchannel R-W generation + SCSI WRITE 12 in raw mode). Holding for its own dedicated turn.
+- **Strict-spec VCD multi-track CD writing** (file system on track 1, video on tracks 2+) — what older standalone VCD players require. Our SPTI data path writes single-track. The validator surfaces this caveat as a finding when it identifies a VCD folder.
+
 ## [0.0.19] — 2026-05-06
 
 ### Added

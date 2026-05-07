@@ -31,6 +31,7 @@ return args[0].ToLowerInvariant() switch
     "cd-lookup"                    => CdLookup(args),
     "ffmpeg"                       => FfmpegInfo(),
     "validate-folder"              => ValidateFolder(args),
+    "vcd-author"                   => VcdAuthorCommand(args),
     "finalize"                     => FinalizeDisc(args),
     "eject"                        => EjectDrive(args),
     "load"                         => LoadDrive(args),
@@ -79,6 +80,8 @@ static int PrintUsage()
     Console.WriteLine("  futureburn cd-lookup <drive>          Compute the disc ID and look it up on MusicBrainz");
     Console.WriteLine("  futureburn ffmpeg                     Detect ffmpeg (foundation for video disc authoring)");
     Console.WriteLine("  futureburn validate-folder <folder>   Recognize DVD-Video / DVD-Audio / VCD / SVCD / BD folder structures");
+    Console.WriteLine("  futureburn vcd-author <input> <out>   Author a Video CD folder from a video file (experimental)");
+    Console.WriteLine("    flags: --pal (default NTSC), --label NAME, --profile 1|2|3");
     Console.WriteLine("  futureburn finalize <drive>           CLOSE SESSION on a disc with open tracks (salvage operation)");
     Console.WriteLine("  futureburn eject <drive>              Eject the drive tray");
     Console.WriteLine("  futureburn load <drive>               Close (load) the drive tray");
@@ -1114,6 +1117,116 @@ static int LoadDrive(string[] args)
         Console.Error.WriteLine($"load failed: {ex.Message}");
         return 1;
     }
+}
+
+static int VcdAuthorCommand(string[] args)
+{
+    if (args.Length < 3)
+    {
+        Console.WriteLine();
+        Console.WriteLine("usage: futureburn vcd-author <input-video> <output-folder> [--pal] [--label NAME] [--profile 1|2|3]");
+        Console.WriteLine();
+        Console.WriteLine("EXPERIMENTAL: produces a VCD folder structure (VCD/INFO.VCD,");
+        Console.WriteLine("  VCD/ENTRIES.VCD, MPEGAV/AVSEQ01.DAT). Plays in VLC and other");
+        Console.WriteLine("  software players; strict-spec standalone VCD players may reject it");
+        Console.WriteLine("  because we burn single-track data CDs (real VCDs are multi-track).");
+        return 1;
+    }
+    var input     = args[1];
+    var outFolder = args[2];
+    bool isPal    = HasFlag(args, "--pal");
+    var label     = FlagValue(args, "--label") ?? Path.GetFileNameWithoutExtension(input);
+    int profile   = int.TryParse(FlagValue(args, "--profile"), out var p) && p is 1 or 2 or 3 ? p : 2;
+
+    if (!File.Exists(input))
+    {
+        Console.Error.WriteLine($"Input video not found: {input}");
+        return 1;
+    }
+
+    var ffmpeg = Futureburn.Core.Ffmpeg.FfmpegRunner.Locate();
+    if (ffmpeg is null)
+    {
+        Console.Error.WriteLine("ffmpeg not found. Install with: winget install Gyan.FFmpeg");
+        Console.Error.WriteLine("Then run `futureburn ffmpeg` to verify before retrying.");
+        return 1;
+    }
+
+    Directory.CreateDirectory(Path.Combine(outFolder, "VCD"));
+    Directory.CreateDirectory(Path.Combine(outFolder, "MPEGAV"));
+
+    var avseqPath = Path.Combine(outFolder, "MPEGAV", "AVSEQ01.DAT");
+
+    Console.WriteLine();
+    Console.WriteLine($"  Input:    {input}");
+    Console.WriteLine($"  Output:   {outFolder}");
+    Console.WriteLine($"  Profile:  VCD {(profile == 1 ? "1.0" : profile == 2 ? "1.1" : "2.0")}");
+    Console.WriteLine($"  System:   {(isPal ? "PAL" : "NTSC")}");
+    Console.WriteLine($"  Label:    {label}");
+    Console.WriteLine();
+    Console.WriteLine($"Transcoding via ffmpeg ({ffmpeg.VersionLine}) ...");
+    Console.WriteLine($"  Target:   {(isPal ? "pal-vcd" : "ntsc-vcd")} (MPEG-1 video + MP2 audio in MPEG-PS)");
+
+    // ffmpeg's -target presets: pal-vcd / ntsc-vcd. These set:
+    //   video = mpeg1video, 352x288 PAL or 352x240 NTSC, ~1150 kbps
+    //   audio = mp2, 224 kbps stereo, 44.1 kHz
+    //   muxer = mpeg
+    // Output extension should be .mpg or .dat — ffmpeg picks based on extension.
+    var ffargs = new[]
+    {
+        "-y", "-i", input,
+        "-target", isPal ? "pal-vcd" : "ntsc-vcd",
+        avseqPath,
+    };
+
+    Console.WriteLine();
+    var rr = ffmpeg.Run(ffargs, line =>
+    {
+        // Surface progress + errors; suppress most chatter.
+        if (line.StartsWith("frame=") || line.Contains("Error") || line.StartsWith("[error]"))
+            Console.WriteLine($"  {line}");
+    });
+
+    if (rr.ExitCode != 0 || !File.Exists(avseqPath))
+    {
+        Console.Error.WriteLine();
+        Console.Error.WriteLine($"ffmpeg failed (exit {rr.ExitCode}). Last lines of log:");
+        var tail = rr.CombinedLog.Split('\n').TakeLast(8);
+        foreach (var l in tail) Console.Error.WriteLine($"  {l}");
+        return 1;
+    }
+
+    // Write the VCD metadata files. INFO.VCD doesn't depend on disc layout
+    // so we write it normally. ENTRIES.VCD nominally points at MMC tracks 2..N
+    // by MSF position; for our single-track burn we put a placeholder track-2
+    // entry at LBA 0. Strict players will likely refuse this; software players
+    // are typically tolerant.
+    var infoPath    = Path.Combine(outFolder, "VCD", "INFO.VCD");
+    var entriesPath = Path.Combine(outFolder, "VCD", "ENTRIES.VCD");
+    File.WriteAllBytes(infoPath,
+        Futureburn.Core.Authoring.VcdInfoBuilder.Build(label, isPal, systemProfile: profile));
+    File.WriteAllBytes(entriesPath,
+        Futureburn.Core.Authoring.VcdEntriesBuilder.Build(new[]
+        {
+            new Futureburn.Core.Authoring.VcdEntriesBuilder.TrackEntry(MmcTrackNumber: 2, StartLba: 0),
+        }));
+
+    var avseqSize = new FileInfo(avseqPath).Length;
+    Console.WriteLine();
+    Console.WriteLine("--- Authoring complete ---");
+    Console.WriteLine($"  AVSEQ01.DAT:  {FormatBytes(avseqSize)}");
+    Console.WriteLine($"  INFO.VCD:     2048 bytes");
+    Console.WriteLine($"  ENTRIES.VCD:  2048 bytes");
+    Console.WriteLine();
+    Console.WriteLine("To burn the resulting folder:");
+    Console.WriteLine($"  futureburn burn-folder \"{outFolder}\" F: --label \"{label}\"");
+    Console.WriteLine();
+    Console.WriteLine("⚠ EXPERIMENTAL: This produces a single-track data CD with a VCD-shaped");
+    Console.WriteLine("  file system. VLC, MPC-HC, and most modern software DVD/VCD players");
+    Console.WriteLine("  will play it. Older standalone VCD players that strictly require");
+    Console.WriteLine("  multi-track CDs may not. Multi-track CD-data writing is a separate");
+    Console.WriteLine("  future project.");
+    return 0;
 }
 
 static int FfmpegInfo()

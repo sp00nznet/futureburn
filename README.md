@@ -25,6 +25,8 @@ A passion project that grew teeth.
 - ✅ **Disc-folder validator** (`validate-folder <folder>`) — given a folder, identify whether it's a valid DVD-Video, DVD-Audio, VCD, SVCD, Blu-ray Movie, or plain data structure. Flags missing required files (VIDEO_TS.BUP missing, no AVSEQ*.DAT, etc.) before you waste a disc burning a malformed structure. Same logic powers the `cd-info` disc-type label.
 - ✅ **ffmpeg detection** (`ffmpeg`) — locate ffmpeg on the system. Foundation for future video-disc authoring (DVD-Video, VCD, SVCD).
 - ✅ **ffprobe-enriched audio info** — when ffmpeg is installed, `probe <file>` now also shows container, codec, bitrate, file size, and embedded tags (creation date, encoder, etc.) on top of the basic NAudio readout.
+- ✅ **VCD authoring (experimental)** — `vcd-author <input> <out>` takes a video file, runs ffmpeg's `pal-vcd` / `ntsc-vcd` target preset to produce MPEG-1 + MP2 in MPEG-PS, and writes the binary `INFO.VCD` + `ENTRIES.VCD` files for the standard VCD folder structure. Software players (VLC, MPC-HC) play the result; strict standalone VCD players may reject it because we burn single-track data CDs (real VCDs are multi-track — separate future project).
+- ✅ **Audio CD GUI workflow polish** — drag-and-drop reorder of tracks, right-click / F2 / double-click to rename a track, ▶ Play / ■ Stop preview buttons backed by NAudio.
 - ✅ True gapless DAO via SPTI cue sheet (experimental — `--gapless` flag; first hardware test pending)
 
 ## What's coming
