@@ -29,6 +29,8 @@ return args[0].ToLowerInvariant() switch
     "spti-info"                    => SptiInfo(args),
     "cd-info"                      => CdInfo(args),
     "cd-lookup"                    => CdLookup(args),
+    "ffmpeg"                       => FfmpegInfo(),
+    "validate-folder"              => ValidateFolder(args),
     "finalize"                     => FinalizeDisc(args),
     "eject"                        => EjectDrive(args),
     "load"                         => LoadDrive(args),
@@ -75,6 +77,8 @@ static int PrintUsage()
     Console.WriteLine("  futureburn spti-info <drive>          SCSI INQUIRY via SPTI (proves the SPTI path works)");
     Console.WriteLine("  futureburn cd-info <drive>            Read the disc's TOC: track listing, types, durations");
     Console.WriteLine("  futureburn cd-lookup <drive>          Compute the disc ID and look it up on MusicBrainz");
+    Console.WriteLine("  futureburn ffmpeg                     Detect ffmpeg (foundation for video disc authoring)");
+    Console.WriteLine("  futureburn validate-folder <folder>   Recognize DVD-Video / DVD-Audio / VCD / SVCD / BD folder structures");
     Console.WriteLine("  futureburn finalize <drive>           CLOSE SESSION on a disc with open tracks (salvage operation)");
     Console.WriteLine("  futureburn eject <drive>              Eject the drive tray");
     Console.WriteLine("  futureburn load <drive>               Close (load) the drive tray");
@@ -1084,6 +1088,67 @@ static int LoadDrive(string[] args)
     }
 }
 
+static int FfmpegInfo()
+{
+    Console.WriteLine();
+    Console.WriteLine("Looking for ffmpeg ...");
+    var info = Futureburn.Core.Tools.FfmpegLocator.Locate();
+    if (info is null)
+    {
+        Console.WriteLine();
+        Console.WriteLine("  Not found.");
+        Console.WriteLine();
+        Console.WriteLine("  Install via one of:");
+        Console.WriteLine("    winget install Gyan.FFmpeg");
+        Console.WriteLine("    choco  install ffmpeg");
+        Console.WriteLine("    scoop  install ffmpeg");
+        Console.WriteLine("    https://www.gyan.dev/ffmpeg/builds/");
+        Console.WriteLine();
+        Console.WriteLine("  ffmpeg is the foundation for any future MKV → DVD-Video, MKV → VCD,");
+        Console.WriteLine("  or hi-res audio → DVD-Audio authoring. We don't bundle it (licensing).");
+        return 1;
+    }
+
+    Console.WriteLine();
+    Console.WriteLine($"  Path:    {info.Path}");
+    Console.WriteLine($"  Version: {info.VersionLine}");
+    Console.WriteLine();
+    Console.WriteLine("  ffmpeg is available. Video disc authoring (DVD-Video / VCD / SVCD)");
+    Console.WriteLine("  will be able to use this when those subsystems land.");
+    return 0;
+}
+
+static int ValidateFolder(string[] args)
+{
+    if (args.Length < 2)
+    {
+        Console.WriteLine();
+        Console.WriteLine("usage: futureburn validate-folder <folder>");
+        return 1;
+    }
+    var folder = args[1];
+    var v = Futureburn.Core.Fs.DiscFolderValidator.Validate(folder);
+
+    Console.WriteLine();
+    Console.WriteLine($"  Folder: {Path.GetFullPath(folder)}");
+    Console.WriteLine($"  Type:   {v.Type}");
+    Console.WriteLine($"  Status: {(v.LooksWellFormed ? "well-formed (should burn to a valid disc)" : "issues found — see below")}");
+
+    if (v.Findings.Count > 0)
+    {
+        Console.WriteLine();
+        Console.WriteLine("  Findings:");
+        foreach (var f in v.Findings) Console.WriteLine($"    - {f}");
+    }
+    if (v.Issues.Count > 0)
+    {
+        Console.WriteLine();
+        Console.WriteLine("  Issues:");
+        foreach (var i in v.Issues) Console.WriteLine($"    ! {i}");
+    }
+    return v.LooksWellFormed ? 0 : 1;
+}
+
 static int CdLookup(string[] args)
 {
     if (args.Length < 2 || args[1].Length < 1 || !char.IsLetter(args[1][0]))
@@ -1280,22 +1345,22 @@ static void ShowFileSystem(char driveLetter)
         Console.WriteLine($"--- File system on {driveLetter}:\\ ---");
 
         // Specific disc-type detection from well-known folder structure.
+        // Defer to the shared validator so CLI + GUI agree on labels.
+        var v = Futureburn.Core.Fs.DiscFolderValidator.Validate($"{driveLetter}:\\");
+        var label = v.Type switch
+        {
+            Futureburn.Core.Fs.DiscFolderValidator.DiscType.DvdVideo            => "DVD-Video",
+            Futureburn.Core.Fs.DiscFolderValidator.DiscType.DvdAudio            => "DVD-Audio",
+            Futureburn.Core.Fs.DiscFolderValidator.DiscType.DvdAudioVideoHybrid => "Hybrid DVD-Audio + DVD-Video",
+            Futureburn.Core.Fs.DiscFolderValidator.DiscType.VideoCd             => "Video CD (VCD)",
+            Futureburn.Core.Fs.DiscFolderValidator.DiscType.SuperVideoCd        => "Super Video CD (SVCD)",
+            Futureburn.Core.Fs.DiscFolderValidator.DiscType.BluRayMovie         => "Blu-ray Movie",
+            Futureburn.Core.Fs.DiscFolderValidator.DiscType.DataDisc            => "Data CD/DVD",
+            _                                                                    => "Unknown",
+        };
+        Console.WriteLine($"  Disc type: {label}");
+
         var entries = root.GetFileSystemInfos();
-        var folderNames = entries.Where(e => (e.Attributes & FileAttributes.Directory) != 0)
-                                 .Select(e => e.Name.ToUpperInvariant())
-                                 .ToHashSet();
-        bool dvdVideo = folderNames.Contains("VIDEO_TS");
-        bool dvdAudio = folderNames.Contains("AUDIO_TS");
-        if (dvdVideo && dvdAudio)
-            Console.WriteLine("  Disc type: Hybrid DVD-Audio + DVD-Video");
-        else if (dvdVideo)
-            Console.WriteLine("  Disc type: DVD-Video");
-        else if (dvdAudio)
-            Console.WriteLine("  Disc type: DVD-Audio");
-        else if (folderNames.Contains("BDMV"))
-            Console.WriteLine("  Disc type: Blu-ray Movie");
-        else
-            Console.WriteLine("  Disc type: Data CD/DVD");
 
         Console.WriteLine();
         Console.WriteLine("  Top-level entries:");

@@ -4,6 +4,25 @@ All notable changes to futureburn will land here. Format roughly follows [Keep a
 
 ## [Unreleased]
 
+## [0.0.18] — 2026-05-06
+
+### Added — prep work for video-disc authoring (DVD-Video / VCD / DVD-Audio)
+None of the actual authoring (transcoding + IFO/BUP/VOB / INFO.VCD generation) lands in this commit — those are still long-arc projects. What does land are foundational pieces that all three authoring paths will use:
+- `Futureburn.Core/Tools/FfmpegLocator.cs` + `ffmpeg` CLI command. Locates ffmpeg on PATH, ProgramFiles, ProgramFilesX86, %LOCALAPPDATA%\Programs\, C:\ffmpeg\, Chocolatey, Scoop. Reports the version line. Documents which package managers can install it. We don't bundle ffmpeg (LGPL/GPL licensing concerns for our MIT distribution).
+- `Futureburn.Core/Fs/DiscFolderValidator.cs` + `validate-folder` CLI command. Recognizes the well-known disc-folder structures (VIDEO_TS, AUDIO_TS, VCD, SVCD, BDMV) AND validates the structural details — VIDEO_TS.IFO + .BUP pairing, AOB presence, AVSEQ*.DAT presence, etc. Reports findings + issues. Catches "almost a DVD-Video disc but missing VIDEO_TS.BUP" before a disc gets wasted.
+- `cd-info` now uses the same validator for its disc-type label, so CLI + GUI agree on what a disc is. VCD and SVCD are now explicitly recognized (was just "Data CD/DVD" before).
+
+### Validated
+- ffmpeg detection: correctly reports "not found" + install instructions on the user's machine (no ffmpeg installed yet).
+- DVD-Video validation: synthetic folder with VIDEO_TS.IFO + VTS_01_1.VOB but no .BUP correctly flagged.
+- VCD validation: synthetic folder with INFO.VCD + ENTRIES.VCD + AVSEQ01.DAT recognized as well-formed VideoCd, with the Mode-2-sectors caveat surfaced as a note.
+
+### Tests
+- 12 new `DiscFolderValidatorTests` covering each disc type + a few malformed cases. Total 80 tests.
+
+### Notes — VCD scope
+User asked specifically about VCD. Same answer as DVD-Video and DVD-Audio: **needs authoring** (MPEG-1 video + MPEG-1 Layer II audio + MPEG-PS muxing + binary INFO.VCD/ENTRIES.VCD/etc.). One additional VCD-specific quirk: spec-compliant VCDs use **CD-ROM XA Mode 2 Form 2** sectors for video tracks (2324 user bytes), while our SPTI data path writes Mode 1 (2048 bytes). In practice most modern players accept Mode-1-burned VCDs; older standalone VCD players may not. The validator surfaces this as a note.
+
 ## [0.0.17] — 2026-05-06
 
 ### Added

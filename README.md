@@ -22,6 +22,8 @@ A passion project that grew teeth.
 - ✅ **Folder → ISO**: build an ISO 9660 + Joliet + UDF disc image from any folder (`mkiso`) or do it and burn in one step (`burn-folder`). GUI tile has a **Choose folder...** button that builds the ISO in the background.
 - ✅ **BIN/CUE burning** (data-mode, MODE1/2048 + MODE1/2352). Hand `burn-iso` a `.cue` and we parse it, find the `.bin`, and burn the user-data portion as 2048-byte sectors.
 - ✅ **MusicBrainz disc lookup** (`cd-lookup <drive>`) — compute the canonical MusicBrainz disc ID from the disc's TOC and query the public API for releases. Returns artist + album + full track listing for any audio CD that's in the database.
+- ✅ **Disc-folder validator** (`validate-folder <folder>`) — given a folder, identify whether it's a valid DVD-Video, DVD-Audio, VCD, SVCD, Blu-ray Movie, or plain data structure. Flags missing required files (VIDEO_TS.BUP missing, no AVSEQ*.DAT, etc.) before you waste a disc burning a malformed structure. Same logic powers the `cd-info` disc-type label.
+- ✅ **ffmpeg detection** (`ffmpeg`) — locate ffmpeg on the system. Foundation for future video-disc authoring (DVD-Video, VCD, SVCD).
 - ✅ True gapless DAO via SPTI cue sheet (experimental — `--gapless` flag; first hardware test pending)
 
 ## What's coming
