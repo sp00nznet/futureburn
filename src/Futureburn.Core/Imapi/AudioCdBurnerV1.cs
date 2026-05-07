@@ -199,19 +199,24 @@ public static class AudioCdBurnerV1
             master = (IDiscMaster)new MsDiscMasterObjClass();
             master.Open();
 
+            // Quirk discovered the hard way: explicitly calling SetActiveDiscRecorder
+            // makes RecordDisc fail with IMAPI_E_NOACTIVERECORDER (0x8004020E),
+            // which is the opposite of what you'd expect from the docs. Diagnose()
+            // works without ever calling SetActiveDiscRecorder, so IMAPI v1 must
+            // be picking an implicit default. We let it. (When the user has multiple
+            // writers we'll need to revisit — Windows always has at least one
+            // optical writer in the default-recorder slot if any are attached.)
             var formatId = ImapiV1Formats.Redbook;
             master.SetActiveDiscMasterFormat(ref formatId, out var formatObj);
             var redbook = (IRedbookDiscMaster)formatObj;
 
-            // Pick the first recorder. (TODO when more than one writer is present:
-            // match recorder.GetPath() to the OpticalDrive's mount point via
-            // QueryDosDevice. The user's machine has one writer, so first = right.)
+            // We still enumerate so we can keep a strong reference and (in future)
+            // pass through to a richer diagnostic on failure.
             master.EnumDiscRecorders(out var recEnum);
             var batch = new IDiscRecorder[1];
-            if (recEnum.Next(1, batch, out var fetched) != 0 || fetched == 0)
+            if (recEnum.Next(1, batch, out _) != 0)
                 throw new AudioCdBurner.BurnException("IMAPI v1 enumerated zero recorders.");
             var recorder = batch[0];
-            master.SetActiveDiscRecorder(recorder);
 
             redbook.GetAudioBlockSize(out int blockSize);
             // Read in chunks of 64 blocks (~150 KB) — large enough for throughput,
