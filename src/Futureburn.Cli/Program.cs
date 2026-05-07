@@ -25,6 +25,8 @@ return args[0].ToLowerInvariant() switch
     "spti-info"                    => SptiInfo(args),
     "cd-info"                      => CdInfo(args),
     "finalize"                     => FinalizeDisc(args),
+    "eject"                        => EjectDrive(args),
+    "load"                         => LoadDrive(args),
     "help" or "--help" or "-h"     => PrintUsage(),
     _                              => Unknown(args[0]),
 };
@@ -61,6 +63,8 @@ static int PrintUsage()
     Console.WriteLine("  futureburn spti-info <drive>          SCSI INQUIRY via SPTI (proves the SPTI path works)");
     Console.WriteLine("  futureburn cd-info <drive>            Read the disc's TOC: track listing, types, durations");
     Console.WriteLine("  futureburn finalize <drive>           CLOSE SESSION on a disc with open tracks (salvage operation)");
+    Console.WriteLine("  futureburn eject <drive>              Eject the drive tray");
+    Console.WriteLine("  futureburn load <drive>               Close (load) the drive tray");
     Console.WriteLine();
     Console.WriteLine("audio formats: " + string.Join(", ", AudioDecoder.SupportedExtensions));
     return 0;
@@ -475,6 +479,30 @@ static int BurnViaSpti(OpticalDrive drive, Playlist playlist, string tempDir,
             });
         Console.WriteLine();
         Console.WriteLine("BURN COMPLETE (SPTI). Disc finalized.");
+
+        // Post-burn self-verification: read the disc back and confirm the TOC
+        // matches what the plan called for.
+        Console.WriteLine();
+        Console.WriteLine("Verifying ...");
+        try
+        {
+            var v = Futureburn.Core.Spti.SptiAudioCdBurner.Verify(plan);
+            if (v.Passed)
+            {
+                Console.WriteLine($"  VERIFIED: {v.TrackCount} tracks, " +
+                                  $"{v.DiscStatus}/{v.SessionState}, all durations match.");
+            }
+            else
+            {
+                Console.WriteLine($"  Verification FOUND {v.Mismatches.Count} issue(s):");
+                foreach (var m in v.Mismatches)
+                    Console.WriteLine($"    - {m}");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"  (verify step couldn't read the disc: {ex.Message})");
+        }
         return 0;
     }
     catch (AudioCdBurner.BurnException ex)
@@ -617,6 +645,50 @@ static int SptiInfo(string[] args)
     }
 }
 
+static int EjectDrive(string[] args)
+{
+    if (args.Length < 2 || args[1].Length < 1 || !char.IsLetter(args[1][0]))
+    {
+        Console.WriteLine("\nusage: futureburn eject <drive>");
+        return 1;
+    }
+    char letter = char.ToUpperInvariant(args[1][0]);
+    try
+    {
+        using var dev = Futureburn.Core.Spti.SptiDevice.OpenDriveLetter(letter);
+        dev.EjectTray();
+        Console.WriteLine($"\nEjected {letter}:\\");
+        return 0;
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"eject failed: {ex.Message}");
+        return 1;
+    }
+}
+
+static int LoadDrive(string[] args)
+{
+    if (args.Length < 2 || args[1].Length < 1 || !char.IsLetter(args[1][0]))
+    {
+        Console.WriteLine("\nusage: futureburn load <drive>");
+        return 1;
+    }
+    char letter = char.ToUpperInvariant(args[1][0]);
+    try
+    {
+        using var dev = Futureburn.Core.Spti.SptiDevice.OpenDriveLetter(letter);
+        dev.LoadTray();
+        Console.WriteLine($"\nLoaded (closed tray) {letter}:\\");
+        return 0;
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"load failed: {ex.Message}");
+        return 1;
+    }
+}
+
 static int FinalizeDisc(string[] args)
 {
     if (args.Length < 2 || args[1].Length < 1 || !char.IsLetter(args[1][0]))
@@ -702,6 +774,12 @@ static int CdInfo(string[] args)
         {
             Console.WriteLine($"  {t.Number,2}  {t.TypeLabel,-15}  {t.StartLba,12:N0}  {t.LengthLba,12:N0}  {t.Duration:mm\\:ss}");
         }
+
+        // For data discs (or mixed-mode), also show what's on the file system.
+        if (toc.HasData)
+        {
+            ShowFileSystem(letter);
+        }
         return 0;
     }
     catch (Exception ex)
@@ -709,6 +787,57 @@ static int CdInfo(string[] args)
         Console.Error.WriteLine();
         Console.Error.WriteLine($"cd-info failed: {ex.Message}");
         return 1;
+    }
+}
+
+static void ShowFileSystem(char driveLetter)
+{
+    try
+    {
+        var root = new DirectoryInfo($"{driveLetter}:\\");
+        if (!root.Exists) return;
+
+        Console.WriteLine();
+        Console.WriteLine($"--- File system on {driveLetter}:\\ ---");
+
+        // Specific disc-type detection from well-known folder structure.
+        var entries = root.GetFileSystemInfos();
+        var folderNames = entries.Where(e => (e.Attributes & FileAttributes.Directory) != 0)
+                                 .Select(e => e.Name.ToUpperInvariant())
+                                 .ToHashSet();
+        bool dvdVideo = folderNames.Contains("VIDEO_TS");
+        bool dvdAudio = folderNames.Contains("AUDIO_TS");
+        if (dvdVideo && dvdAudio)
+            Console.WriteLine("  Disc type: Hybrid DVD-Audio + DVD-Video");
+        else if (dvdVideo)
+            Console.WriteLine("  Disc type: DVD-Video");
+        else if (dvdAudio)
+            Console.WriteLine("  Disc type: DVD-Audio");
+        else if (folderNames.Contains("BDMV"))
+            Console.WriteLine("  Disc type: Blu-ray Movie");
+        else
+            Console.WriteLine("  Disc type: Data CD/DVD");
+
+        Console.WriteLine();
+        Console.WriteLine("  Top-level entries:");
+        foreach (var e in entries.OrderByDescending(e => (e.Attributes & FileAttributes.Directory) != 0)
+                                  .ThenBy(e => e.Name))
+        {
+            bool isDir = (e.Attributes & FileAttributes.Directory) != 0;
+            if (isDir)
+            {
+                Console.WriteLine($"    [DIR]  {e.Name}/");
+            }
+            else
+            {
+                var fi = (FileInfo)e;
+                Console.WriteLine($"           {e.Name}  ({FormatBytes(fi.Length)})");
+            }
+        }
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"  (file system read failed: {ex.Message})");
     }
 }
 

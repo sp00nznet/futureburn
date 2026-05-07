@@ -129,6 +129,27 @@ public sealed class SptiDevice : IDisposable
     }
 
     /// <summary>
+    /// MMC START STOP UNIT (0x1B) — eject or load the disc tray. The drive must
+    /// be willing to eject (some drives ignore the command if media is mounted
+    /// by Windows; usually fine for blank discs).
+    /// </summary>
+    public void EjectTray()  => StartStopUnit(start: false, loadEject: true);
+    public void LoadTray()   => StartStopUnit(start: true,  loadEject: true);
+
+    private void StartStopUnit(bool start, bool loadEject)
+    {
+        var cdb = new byte[16];
+        cdb[0] = MmcOpcodes.StartStopUnit;
+        cdb[1] = 0x00;  // IMMED = 0 (block until done)
+        // CDB byte 4 bits: START (bit 0), LOEJ (bit 1)
+        byte b4 = 0;
+        if (start)     b4 |= 0x01;
+        if (loadEject) b4 |= 0x02;
+        cdb[4] = b4;
+        SendScsi(cdb, cdbLength: 6, dataBuffer: null, dataIn: false, timeoutSec: 60);
+    }
+
+    /// <summary>
     /// MMC SET CD SPEED (0xBB). Speeds in KB/s. Pass 0xFFFF to mean "max".
     /// Audio CD 1x is 176 KB/s (raw rate), so 16x ≈ 2,816 KB/s, 48x ≈ 8,448 KB/s.
     /// </summary>

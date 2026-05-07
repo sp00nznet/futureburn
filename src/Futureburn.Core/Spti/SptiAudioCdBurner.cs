@@ -128,11 +128,12 @@ public static class SptiAudioCdBurner
         }
 
         // 5. Burn each track.
-        // 16 * 2352 = 37,632 bytes per WRITE 12 — well under SPTI's 64 KB cap and
-        // small enough that a single call is unlikely to exceed the OS-level
-        // ~30 sec semaphore timeout even on a slow USB CD writer (the LG GE20LU10
-        // hit Win32 ERROR_SEM_TIMEOUT at chunk 27).
-        const int chunkSectors = 16;
+        // 8 * 2352 = 18,816 bytes per WRITE 12 — very conservative, leaves lots
+        // of headroom for the OS-level semaphore timeout. With BUFE enabled the
+        // throughput cost of smaller chunks is negligible (drive pause/resume
+        // dominates either way).
+        const int chunkSectors = 8;
+        const int writeRetries = 3;     // retry transient OS timeouts (Win32 121)
         int trackNum = 1;
         foreach (var track in plan.Tracks)
         {
@@ -173,14 +174,30 @@ public static class SptiAudioCdBurner
                         $"Track {trackNum}: short read from staged WAV " +
                         $"(wanted {bytesThisChunk}, got {got}).");
 
-                try
+                // Retry on transient OS-level semaphore timeouts (Win32 121).
+                // The drive's pause/resume on buffer pressure occasionally exceeds
+                // the OS IO timer; the chunk hasn't been committed to media so a
+                // retry with the same data and same LBA is safe.
+                int attempt = 0;
+                while (true)
                 {
-                    dev.Write12(currentLba, sectorsThisChunk, buffer);
-                }
-                catch (Exception ex)
-                {
-                    throw new AudioCdBurner.BurnException(
-                        $"WRITE 12 failed at track {trackNum}, LBA {currentLba}: {ex.Message}", ex);
+                    try
+                    {
+                        dev.Write12(currentLba, sectorsThisChunk, buffer);
+                        break;
+                    }
+                    catch (InvalidOperationException ex)
+                        when (ex.Message.Contains("Win32 121") && attempt < writeRetries)
+                    {
+                        attempt++;
+                        Thread.Sleep(250 * attempt);  // brief backoff
+                        continue;
+                    }
+                    catch (Exception ex)
+                    {
+                        throw new AudioCdBurner.BurnException(
+                            $"WRITE 12 failed at track {trackNum}, LBA {currentLba}: {ex.Message}", ex);
+                    }
                 }
 
                 currentLba       += sectorsThisChunk;
@@ -201,10 +218,63 @@ public static class SptiAudioCdBurner
             trackNum++;
         }
 
-        // 5. Close session — finalizes the disc, writes the TOC and lead-out.
+        // 6. Close session — finalizes the disc, writes the TOC and lead-out.
         try { dev.CloseTrackOrSession(function: 2, trackNumber: 0); }
         catch (Exception ex)
         { throw new AudioCdBurner.BurnException($"CLOSE SESSION failed: {ex.Message}", ex); }
+    }
+
+    public sealed record VerificationResult(
+        bool Passed,
+        SptiDevice.DiscStatus DiscStatus,
+        SptiDevice.SessionState SessionState,
+        int TrackCount,
+        int ExpectedTrackCount,
+        IReadOnlyList<string> Mismatches);
+
+    /// <summary>
+    /// Post-burn sanity check: open the drive again, read the disc info + TOC,
+    /// and compare against what the plan asked for. Tolerant of small per-track
+    /// duration differences (rounding, padding) — flags only structural problems.
+    /// </summary>
+    public static VerificationResult Verify(SptiBurnPlan plan)
+    {
+        var mount = plan.Drive.PrimaryMount
+            ?? throw new InvalidOperationException("Drive has no mount point.");
+        char letter = mount[0];
+
+        using var dev = SptiDevice.OpenDriveLetter(letter);
+        var info = dev.ReadDiscInformation();
+        var toc  = dev.ReadToc();
+
+        var mismatches = new List<string>();
+        if (info.Status != SptiDevice.DiscStatus.Finalized)
+            mismatches.Add($"Disc status is {info.Status}, expected Finalized.");
+        if (info.LastSessionState != SptiDevice.SessionState.Complete)
+            mismatches.Add($"Last session is {info.LastSessionState}, expected Complete.");
+        if (toc.Tracks.Count != plan.Tracks.Count)
+            mismatches.Add($"Disc has {toc.Tracks.Count} tracks, plan expected {plan.Tracks.Count}.");
+
+        // Compare each track's duration to plan, allowing a small tolerance for
+        // sector-boundary padding (tracks can be 1-2 seconds longer than source).
+        int compareCount = Math.Min(toc.Tracks.Count, plan.Tracks.Count);
+        for (int i = 0; i < compareCount; i++)
+        {
+            var planSec = plan.Tracks[i].Duration.TotalSeconds;
+            var diskSec = toc.Tracks[i].Duration.TotalSeconds;
+            var deltaSec = Math.Abs(planSec - diskSec);
+            if (deltaSec > 3)  // > 3 sec off is suspicious
+                mismatches.Add(
+                    $"Track {i + 1} duration mismatch: planned {planSec:0.0}s, disc {diskSec:0.0}s.");
+        }
+
+        return new VerificationResult(
+            Passed:             mismatches.Count == 0,
+            DiscStatus:         info.Status,
+            SessionState:       info.LastSessionState,
+            TrackCount:         toc.Tracks.Count,
+            ExpectedTrackCount: plan.Tracks.Count,
+            Mismatches:         mismatches);
     }
 
     private static int ReadFully(Stream stream, byte[] buffer, int count)
