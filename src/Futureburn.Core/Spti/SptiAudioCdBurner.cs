@@ -83,7 +83,9 @@ public static class SptiAudioCdBurner
         return new SptiBurnPlan(drive, trackPlans, totalSectors, tempDir);
     }
 
-    public static void ExecuteBurn(SptiBurnPlan plan, Action<int, int>? onTrackStart = null,
+    public static void ExecuteBurn(SptiBurnPlan plan,
+                                   int? requestedCdSpeedX = null,
+                                   Action<int, int>? onTrackStart = null,
                                    Action<int, int, long, long>? onProgress = null)
     {
         var mount = plan.Drive.PrimaryMount
@@ -102,7 +104,22 @@ public static class SptiAudioCdBurner
             throw new AudioCdBurner.BurnException(
                 $"Disc isn't blank (status: {info.Status}). SPTI burn requires a virgin CD-R.");
 
-        // 3. Set Write Parameters Mode Page for TAO + CD-DA + raw sectors.
+        // 3. Set CD speed if requested. Old USB writers (LG GE20LU10) are way more
+        // reliable at slow speeds — they can hit MEDIUM_ERROR ECC failures at full
+        // negotiated speed even on virgin discs. 4x or 8x is a sane safety pick.
+        if (requestedCdSpeedX is { } x && x > 0)
+        {
+            // Audio CD 1x raw rate ≈ 176 KB/s (2352 bytes * 75 sectors/sec).
+            int kbps = x * 176;
+            try { dev.SetCdSpeed(readSpeedKbps: 0xFFFF, writeSpeedKbps: kbps); }
+            catch (Exception ex)
+            {
+                throw new AudioCdBurner.BurnException(
+                    $"SET CD SPEED to {x}x ({kbps} KB/s) failed: {ex.Message}", ex);
+            }
+        }
+
+        // 4. Set Write Parameters Mode Page for TAO + CD-DA + raw sectors.
         try { dev.ConfigureForAudioTao(); }
         catch (Exception ex)
         {
@@ -110,7 +127,7 @@ public static class SptiAudioCdBurner
                 $"MODE SELECT 10 failed: {ex.Message}", ex);
         }
 
-        // 4. Burn each track.
+        // 5. Burn each track.
         // 16 * 2352 = 37,632 bytes per WRITE 12 — well under SPTI's 64 KB cap and
         // small enough that a single call is unlikely to exceed the OS-level
         // ~30 sec semaphore timeout even on a slow USB CD writer (the LG GE20LU10

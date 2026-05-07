@@ -281,7 +281,10 @@ static int BurnCommand(string[] args)
     }
     if (engine == "spti")
     {
-        return BurnViaSpti(drive, playlist, tempDir, dryRun, skipConfirm, keepTemp);
+        // For SPTI the --speed flag is "Nx" (audio CD 1x = 176 KB/s).
+        // Re-derive the X value from the parsed sps (1x = 75 sps).
+        int? cdSpeedX = speedSps is { } sps ? sps / 75 : null;
+        return BurnViaSpti(drive, playlist, tempDir, dryRun, skipConfirm, keepTemp, cdSpeedX);
     }
 
     AudioCdBurner.BurnPlan plan;
@@ -388,7 +391,7 @@ static int BurnCommand(string[] args)
 }
 
 static int BurnViaSpti(OpticalDrive drive, Playlist playlist, string tempDir,
-                       bool dryRun, bool skipConfirm, bool keepTemp)
+                       bool dryRun, bool skipConfirm, bool keepTemp, int? cdSpeedX)
 {
     Futureburn.Core.Spti.SptiAudioCdBurner.SptiBurnPlan plan;
     try
@@ -423,6 +426,7 @@ static int BurnViaSpti(OpticalDrive drive, Playlist playlist, string tempDir,
     var trackTime = TimeSpan.FromSeconds(plan.TotalSectors / 75.0);
     Console.WriteLine($"  Total time:    {trackTime:hh\\:mm\\:ss}  ({plan.TotalSectors:N0} sectors)");
     Console.WriteLine($"  Mode:          TAO with standard 2-second gaps (Red Book audio)");
+    Console.WriteLine($"  Speed:         {(cdSpeedX is { } x ? x + "x" : "drive default (recommend --speed 4x or 8x for old USB writers)")}");
     Console.WriteLine();
 
     if (dryRun)
@@ -453,6 +457,7 @@ static int BurnViaSpti(OpticalDrive drive, Playlist playlist, string tempDir,
         int lastTrack = -1;
         Futureburn.Core.Spti.SptiAudioCdBurner.ExecuteBurn(
             plan,
+            requestedCdSpeedX: cdSpeedX,
             onTrackStart: (current, total) =>
                 Console.WriteLine($"  -> Track {current}/{total} ..."),
             onProgress: (current, total, written, totalBytes) =>
