@@ -56,7 +56,15 @@ We're going in order. No skipping.
 
 ## Status
 
-**v0.0.6 — the burn pipeline (untested on hardware as of writing).** The CLI now has a `burn` command that takes a playlist and a drive. The code path:
+**v0.0.7 — three burn engines, IMAPI v1 working on legacy drives, SPTI scaffolded.** Some old optical drives (we hit it on an LG GE20LU10 / FE06) make IMAPI v2's `PrepareMedia` return a SCSI mode-page error on perfectly blank CD-Rs, even though the disc and drive are otherwise fine. We now have three burn paths:
+
+- **`--engine v2`** (default): the modern IMAPI 2 path via `MsftDiscFormat2TrackAtOnce`. Works on most drives.
+- **`--engine v1`**: the legacy IMAPI 1 path via `MsDiscMasterObj` + `IRedbookDiscMaster`. Works on at least one drive where v2 doesn't. Validated via `imapi-v1-info`.
+- **`--engine spti`**: scaffold only — opens the drive via SCSI Pass-Through, runs an INQUIRY (proven via `spti-info <drive>`). Full burn implementation is the next step if v1 ever doesn't cut it for someone.
+
+Two new diagnostics: `imapi-v1-info` (does v1 work on this machine?) and `spti-info <drive>` (does SCSI pass-through work?).
+
+**v0.0.6 — the burn pipeline.** The CLI's `burn` command:
 
 1. Validates the playlist (every track exists + is decodable)
 2. Decodes any non-CD-format tracks to a temp dir (skips files that are already 44.1k / 16-bit / stereo WAV — the common case for Spotify rips)

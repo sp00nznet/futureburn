@@ -21,6 +21,8 @@ return args[0].ToLowerInvariant() switch
     "decode"                       => DecodeAudio(args),
     "playlist"                     => ShowPlaylist(args),
     "burn"                         => BurnCommand(args),
+    "imapi-v1-info"                => ImapiV1Info(),
+    "spti-info"                    => SptiInfo(args),
     "help" or "--help" or "-h"     => PrintUsage(),
     _                              => Unknown(args[0]),
 };
@@ -47,10 +49,14 @@ static int PrintUsage()
     Console.WriteLine("  futureburn playlist <file.m3u>        Parse and list an M3U / M3U8 playlist");
     Console.WriteLine("  futureburn burn <playlist> <drive>    Burn an audio CD from a playlist");
     Console.WriteLine("    flags: --dry-run     plan only, no actual burn");
-    Console.WriteLine("           --speed Nx    set burn speed (e.g. --speed 16x). Defaults to max supported.");
+    Console.WriteLine("           --speed Nx    set burn speed (v2 only; default = max supported)");
     Console.WriteLine("           --force       overwrite a non-blank disc (CD-RW only)");
     Console.WriteLine("           --yes / -y    skip the y/N confirmation prompt");
     Console.WriteLine("           --keep-temp   keep decoded WAVs in the temp dir after we finish");
+    Console.WriteLine("           --engine v2|v1   pick the IMAPI engine (default v2; v1 for legacy drives)");
+    Console.WriteLine();
+    Console.WriteLine("  futureburn imapi-v1-info              Diagnose whether IMAPI v1 works here");
+    Console.WriteLine("  futureburn spti-info <drive>          SCSI INQUIRY via SPTI (proves the SPTI path works)");
     Console.WriteLine();
     Console.WriteLine("audio formats: " + string.Join(", ", AudioDecoder.SupportedExtensions));
     return 0;
@@ -220,9 +226,10 @@ static int BurnCommand(string[] args)
     if (args.Length < 3)
     {
         Console.WriteLine();
-        Console.WriteLine("usage: futureburn burn <playlist> <drive> [--dry-run] [--speed Nx] [--force] [--yes] [--keep-temp]");
+        Console.WriteLine("usage: futureburn burn <playlist> <drive> [--dry-run] [--speed Nx] [--force] [--yes] [--keep-temp] [--engine v2|v1]");
         Console.WriteLine("  e.g. futureburn burn mix.m3u8 F: --dry-run");
         Console.WriteLine("       futureburn burn mix.m3u8 F: --speed 16x");
+        Console.WriteLine("       futureburn burn mix.m3u8 F: --engine v1");
         return 1;
     }
 
@@ -233,6 +240,12 @@ static int BurnCommand(string[] args)
     bool skipConfirm = HasFlag(args, "--yes") || HasFlag(args, "-y");
     bool keepTemp    = HasFlag(args, "--keep-temp");
     int? speedSps    = ParseSpeedFlag(args);
+    string engine    = (FlagValue(args, "--engine") ?? "v2").ToLowerInvariant();
+    if (engine is not ("v1" or "v2"))
+    {
+        Console.Error.WriteLine($"Unknown engine '{engine}'. Use v2 (default) or v1.");
+        return 1;
+    }
 
     if (!File.Exists(playlistPath)) { Console.Error.WriteLine($"Playlist not found: {playlistPath}"); return 1; }
 
@@ -253,11 +266,17 @@ static int BurnCommand(string[] args)
     Console.WriteLine($"  Playlist: {playlist.SourcePath}");
     Console.WriteLine($"  Tracks:   {playlist.Entries.Count}");
     Console.WriteLine($"  Drive:    {drive.PrimaryMount} {drive.VendorId} {drive.ProductId} ({drive.Revision})");
+    Console.WriteLine($"  Engine:   IMAPI {engine}");
     Console.WriteLine($"  Mode:     {(dryRun ? "DRY RUN — no actual burn" : "REAL BURN")}");
     Console.WriteLine();
 
     var tempDir = Path.Combine(Path.GetTempPath(), $"futureburn-{Guid.NewGuid():N}");
     Console.WriteLine($"Planning burn (decoding non-CD-format tracks if any) ...");
+
+    if (engine == "v1")
+    {
+        return BurnViaV1(drive, playlist, tempDir, dryRun, skipConfirm, keepTemp);
+    }
 
     AudioCdBurner.BurnPlan plan;
     try
@@ -299,7 +318,7 @@ static int BurnCommand(string[] args)
         Console.WriteLine($"    (* = decoded to CD format in {tempDir})");
 
     Console.WriteLine();
-    Console.WriteLine($"  Total time:    {plan.TotalDuration:mm\\:ss}  ({plan.TotalSectors:N0} sectors)");
+    Console.WriteLine($"  Total time:    {plan.TotalDuration:hh\\:mm\\:ss}  ({plan.TotalSectors:N0} sectors)");
     Console.WriteLine($"  Speed:         {AudioCdBurner.SpsToCdX(plan.ChosenSpeedSps)}x ({plan.ChosenSpeedSps:N0} sectors/sec)");
     if (plan.SupportedSpeedsSps.Count > 0)
         Console.WriteLine($"  Supported:     {string.Join(", ", plan.SupportedSpeedsSps.Select(s => $"{AudioCdBurner.SpsToCdX(s)}x"))}");
@@ -360,6 +379,160 @@ static int BurnCommand(string[] args)
     {
         TryCleanup(tempDir, keep: keepTemp);
     }
+}
+
+static int BurnViaV1(OpticalDrive drive, Playlist playlist, string tempDir,
+                     bool dryRun, bool skipConfirm, bool keepTemp)
+{
+    AudioCdBurnerV1.V1BurnPlan plan;
+    try
+    {
+        plan = AudioCdBurnerV1.Plan(drive, playlist, tempDir);
+    }
+    catch (AudioCdBurner.BurnException ex)
+    {
+        Console.Error.WriteLine();
+        Console.Error.WriteLine($"PLAN FAILED (v1):");
+        Console.Error.WriteLine($"  {ex.Message}");
+        TryCleanup(tempDir, keep: false);
+        return 1;
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine();
+        Console.Error.WriteLine($"PLAN FAILED (v1, unexpected): {ex.Message}");
+        TryCleanup(tempDir, keep: false);
+        return 1;
+    }
+
+    int decodedCount = plan.Tracks.Count(t => t.RequiredDecode);
+
+    Console.WriteLine();
+    Console.WriteLine("--- BURN PLAN (IMAPI v1) ---");
+    Console.WriteLine($"  Disc capacity: {plan.AvailableBlocks:N0} of {plan.TotalBlocks:N0} blocks available " +
+                      $"({plan.AvailableBlocks / 75.0 / 60.0:0.00} min)");
+    Console.WriteLine($"  Block size:    {plan.BlockSize} bytes (CD-DA = 2352)");
+    Console.WriteLine();
+    Console.WriteLine($"  Tracks ({plan.Tracks.Count}):");
+    foreach (var t in plan.Tracks)
+    {
+        var title = t.Title ?? Path.GetFileName(t.SourcePath);
+        var marker = t.RequiredDecode ? "*" : " ";
+        Console.WriteLine($"    {marker} {t.Index,2}. {title}  ({t.Duration:mm\\:ss})");
+    }
+    if (decodedCount > 0)
+        Console.WriteLine($"    (* = decoded to CD format in {tempDir})");
+
+    Console.WriteLine();
+    long totalBlocks = plan.Tracks.Sum(t => t.Sectors);
+    var trackTime = TimeSpan.FromSeconds(totalBlocks / 75.0);
+    Console.WriteLine($"  Total time:    {trackTime:hh\\:mm\\:ss}  ({totalBlocks:N0} blocks)");
+    Console.WriteLine($"  Note: IMAPI v1 chooses the burn speed automatically; the --speed flag is ignored.");
+    Console.WriteLine();
+
+    if (dryRun)
+    {
+        Console.WriteLine("DRY RUN COMPLETE (v1) — no actual burn performed.");
+        TryCleanup(tempDir, keep: keepTemp && decodedCount > 0);
+        return 0;
+    }
+
+    if (!skipConfirm)
+    {
+        Console.Write($"This will write to {drive.PrimaryMount} via IMAPI v1. Continue? [y/N] ");
+        var answer = Console.ReadLine();
+        if (answer?.Trim().ToLowerInvariant() is not ("y" or "yes"))
+        {
+            Console.WriteLine("Aborted.");
+            TryCleanup(tempDir, keep: false);
+            return 0;
+        }
+    }
+
+    Console.WriteLine();
+    Console.WriteLine("Burning via IMAPI v1. Don't unplug the drive or close this window.");
+    Console.WriteLine();
+
+    try
+    {
+        AudioCdBurnerV1.ExecuteBurn(plan, (current, total) =>
+            Console.WriteLine($"  -> Track {current}/{total} ..."));
+        Console.WriteLine();
+        Console.WriteLine("BURN COMPLETE (IMAPI v1). Disc finalized.");
+        return 0;
+    }
+    catch (AudioCdBurner.BurnException ex)
+    {
+        Console.Error.WriteLine();
+        Console.Error.WriteLine($"BURN FAILED (v1): {ex.Message}");
+        return 1;
+    }
+    finally
+    {
+        TryCleanup(tempDir, keep: keepTemp);
+    }
+}
+
+static int SptiInfo(string[] args)
+{
+    if (args.Length < 2 || args[1].Length < 1 || !char.IsLetter(args[1][0]))
+    {
+        Console.WriteLine();
+        Console.WriteLine("usage: futureburn spti-info <drive>");
+        Console.WriteLine("  e.g. futureburn spti-info F");
+        Console.WriteLine();
+        Console.WriteLine("Note: opening a drive for SCSI pass-through usually requires running");
+        Console.WriteLine("an elevated (Administrator) PowerShell. SPTI is the path we'll use to");
+        Console.WriteLine("write CDs without going through IMAPI at all.");
+        return 1;
+    }
+    char letter = char.ToUpperInvariant(args[1][0]);
+    Console.WriteLine();
+    Console.WriteLine($"Opening {letter}:\\ for SCSI pass-through ...");
+    try
+    {
+        using var dev = Futureburn.Core.Spti.SptiDevice.OpenDriveLetter(letter);
+        Console.WriteLine($"  Device path:  {dev.DevicePath}");
+        var inq = dev.Inquiry();
+        Console.WriteLine($"  Vendor:       {inq.Vendor}");
+        Console.WriteLine($"  Product:      {inq.Product}");
+        Console.WriteLine($"  Revision:     {inq.Revision}");
+        Console.WriteLine();
+        Console.WriteLine("SPTI works. The SPTI burn engine itself is scaffolded but not yet implemented;");
+        Console.WriteLine("for actual burning, use --engine v2 (default) or --engine v1 (legacy fallback).");
+        return 0;
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"SPTI failed: {ex.Message}");
+        return 1;
+    }
+}
+
+static int ImapiV1Info()
+{
+    Console.WriteLine();
+    Console.WriteLine("Probing IMAPI v1 ...");
+    var d = AudioCdBurnerV1.Diagnose();
+
+    Console.WriteLine();
+    Console.WriteLine($"  master.Open():        {(d.MasterOpened ? "OK" : "FAILED")}");
+    Console.WriteLine($"  Recorders enumerated: {d.RecorderCount}");
+    foreach (var p in d.RecorderPaths)
+        Console.WriteLine($"     - {p}");
+    Console.WriteLine($"  Redbook format:       {(d.RedbookFormatAvailable ? "AVAILABLE" : "unavailable")}");
+    if (d.AudioBlockSize.HasValue)
+        Console.WriteLine($"  Audio block size:     {d.AudioBlockSize.Value} bytes");
+    if (d.TotalAudioBlocks.HasValue)
+        Console.WriteLine($"  Total blocks:         {d.TotalAudioBlocks.Value:N0}");
+    if (d.AvailableAudioBlocks.HasValue)
+        Console.WriteLine($"  Available blocks:     {d.AvailableAudioBlocks.Value:N0}  ({d.AvailableAudioBlocks.Value / 75.0 / 60.0:0.00} min)");
+    if (d.Error is not null)
+    {
+        Console.WriteLine();
+        Console.WriteLine($"  Error: {d.Error}");
+    }
+    return 0;
 }
 
 static int? ParseSpeedFlag(string[] args)

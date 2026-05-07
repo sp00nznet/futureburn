@@ -4,6 +4,24 @@ All notable changes to futureburn will land here. Format roughly follows [Keep a
 
 ## [Unreleased]
 
+## [0.0.7] — 2026-05-06
+
+### Added
+- **IMAPI v1 burn engine.** `Futureburn.Core/Imapi/AudioCdBurnerV1.cs` and `ImapiV1Interop.cs`. Typed `[ComImport]` declarations for `IDiscMaster`, `IDiscRecorder`, `IEnumDiscRecorders`, `IRedbookDiscMaster`. Used as a fallback for drives where IMAPI v2's TAO path returns a SCSI mode-page error on blank CD-Rs (LG GE20LU10 firmware FE06 is the known case). Selected via `futureburn burn ... --engine v1`.
+- CLI: `imapi-v1-info` — non-destructive diagnostic that opens v1, enumerates recorders, and reports Redbook capabilities. Validated on the LG drive: v1 sees the drive correctly while v2 chokes.
+- **SPTI scaffold.** `Futureburn.Core/Spti/{SptiNative,MmcOpcodes,SptiDevice,SptiBurnEngine}.cs`. P/Invoke for `IOCTL_SCSI_PASS_THROUGH_DIRECT`, MMC opcode constants, drive-opener that talks raw SCSI. `SptiBurnEngine` is a stub for now — full audio CD burn via raw SCSI is the work that comes if v1 also fails on someone's hardware.
+- CLI: `spti-info <drive>` — runs a SCSI INQUIRY via SPTI. Validated end-to-end on the LG drive: returns vendor/product/firmware identical to IMAPI's view, proving the SPTI pipeline works.
+
+### Fixed
+- `BurnPlan` time displays were using `mm\\:ss` format which capped at 59:59 — burned playlists over an hour showed mangled minutes ("14:00" for a 74-min disc). Now uses `hh\\:mm\\:ss`.
+- Wrong field referenced when computing v1 plan total time (was reading disc capacity instead of track sum).
+
+### Investigation notes (in case future-us forgets)
+- IMAPI v1 interfaces are vtable-only IUnknown. PowerShell can't talk to them at all. Typed `[ComImport]` is the only way in.
+- The LG GE20LU10 FE06 returns "mode page not present" from `IDiscFormat2TrackAtOnce::PrepareMedia` for blank CD-R, even with `AcquireExclusiveAccess(force=true)` and `DisableMcn`. Bare PowerShell IMAPI hits the same error — it's not our code.
+- ImgBurn talks to the same drive successfully because it uses SPTI directly (not IMAPI). That's why we have the SPTI scaffold ready.
+- IMAPI 2 IIDs do NOT all share the `7F64` second segment that IDiscMaster2 uses. Look up actual GUIDs from `HKLM:\SOFTWARE\Classes\Interface\` rather than guessing.
+
 ## [0.0.6] — 2026-05-06
 
 ### Added
