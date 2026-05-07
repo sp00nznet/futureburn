@@ -11,6 +11,10 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Futureburn.Cli", "src\Futur
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Futureburn.Gui", "src\Futureburn.Gui\Futureburn.Gui.csproj", "{EF577913-8EDB-4BC5-B476-6BA2B57BFBEE}"
 EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{62E7F32C-47B9-47F2-A973-63AE77B0CA65}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Futureburn.Core.Tests", "tests\Futureburn.Core.Tests\Futureburn.Core.Tests.csproj", "{02E20873-66B6-4AE7-A2D3-EDEB52D32C1A}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -32,10 +36,15 @@ Global
 		{EF577913-8EDB-4BC5-B476-6BA2B57BFBEE}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{EF577913-8EDB-4BC5-B476-6BA2B57BFBEE}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{EF577913-8EDB-4BC5-B476-6BA2B57BFBEE}.Release|Any CPU.Build.0 = Release|Any CPU
+		{02E20873-66B6-4AE7-A2D3-EDEB52D32C1A}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{02E20873-66B6-4AE7-A2D3-EDEB52D32C1A}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{02E20873-66B6-4AE7-A2D3-EDEB52D32C1A}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{02E20873-66B6-4AE7-A2D3-EDEB52D32C1A}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{BAE35B80-8FCA-4439-BCED-3CCE89D8D764} = {E2A83C8A-B981-45CE-9EB0-B1F4F96E1B21}
 		{673CE66C-7596-47AC-A478-BF581F60BDA3} = {E2A83C8A-B981-45CE-9EB0-B1F4F96E1B21}
 		{EF577913-8EDB-4BC5-B476-6BA2B57BFBEE} = {E2A83C8A-B981-45CE-9EB0-B1F4F96E1B21}
+		{02E20873-66B6-4AE7-A2D3-EDEB52D32C1A} = {62E7F32C-47B9-47F2-A973-63AE77B0CA65}
 	EndGlobalSection
 EndGlobal

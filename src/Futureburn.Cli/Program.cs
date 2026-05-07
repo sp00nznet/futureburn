@@ -20,6 +20,7 @@ return args[0].ToLowerInvariant() switch
     "probe"                        => ProbeAudio(args),
     "decode"                       => DecodeAudio(args),
     "playlist"                     => ShowPlaylist(args),
+    "mkplaylist"                   => MakePlaylist(args),
     "burn"                         => BurnCommand(args),
     "imapi-v1-info"                => ImapiV1Info(),
     "spti-info"                    => SptiInfo(args),
@@ -227,6 +228,82 @@ static int ShowPlaylist(string[] args)
         return 0;
     }
     catch (Exception ex) { Console.Error.WriteLine($"playlist load failed: {ex.Message}"); return 1; }
+}
+
+static int MakePlaylist(string[] args)
+{
+    if (args.Length < 2)
+    {
+        Console.WriteLine();
+        Console.WriteLine("usage: futureburn mkplaylist <folder> [--output file.m3u8] [--probe]");
+        return 1;
+    }
+    var folder = args[1];
+    if (!Directory.Exists(folder))
+    {
+        Console.Error.WriteLine($"Folder not found: {folder}");
+        return 1;
+    }
+
+    string? output = FlagValue(args, "--output") ?? FlagValue(args, "-o");
+    bool probe = HasFlag(args, "--probe") || HasFlag(args, "-p");
+
+    var supportedExt = AudioDecoder.SupportedExtensions
+        .Select(e => e.ToLowerInvariant())
+        .ToHashSet();
+
+    var files = new DirectoryInfo(folder)
+        .GetFiles()
+        .Where(f => supportedExt.Contains(f.Extension.ToLowerInvariant()))
+        .OrderBy(f => f.Name, StringComparer.OrdinalIgnoreCase)
+        .ToList();
+
+    if (files.Count == 0)
+    {
+        Console.Error.WriteLine($"No supported audio files in {folder}");
+        Console.Error.WriteLine($"  Supported extensions: {string.Join(", ", AudioDecoder.SupportedExtensions)}");
+        return 1;
+    }
+
+    var sb = new System.Text.StringBuilder();
+    sb.AppendLine("#EXTM3U");
+
+    int probeFailures = 0;
+    foreach (var f in files)
+    {
+        if (probe)
+        {
+            try
+            {
+                var info = AudioDecoder.Probe(f.FullName);
+                int seconds = (int)info.Duration.TotalSeconds;
+                var title = Path.GetFileNameWithoutExtension(f.Name);
+                sb.AppendLine($"#EXTINF:{seconds},{title}");
+            }
+            catch
+            {
+                probeFailures++;
+                sb.AppendLine($"#EXTINF:-1,{Path.GetFileNameWithoutExtension(f.Name)}");
+            }
+        }
+        // Path is just the filename — relative paths resolve against the
+        // playlist's directory, which is the folder we just scanned.
+        sb.AppendLine(f.Name);
+    }
+
+    if (output is not null)
+    {
+        File.WriteAllText(output, sb.ToString());
+        Console.WriteLine();
+        Console.WriteLine($"Wrote {files.Count} track{(files.Count == 1 ? "" : "s")} to {output}");
+        if (probe && probeFailures > 0)
+            Console.WriteLine($"  ({probeFailures} file{(probeFailures == 1 ? "" : "s")} couldn't be probed; their EXTINF duration is -1)");
+    }
+    else
+    {
+        Console.Write(sb.ToString());
+    }
+    return 0;
 }
 
 static int BurnCommand(string[] args)
