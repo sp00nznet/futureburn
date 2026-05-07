@@ -4,6 +4,26 @@ All notable changes to futureburn will land here. Format roughly follows [Keep a
 
 ## [Unreleased]
 
+## [0.0.21] — 2026-05-07
+
+### Added — DVD-Video authoring (experimental)
+- `Futureburn.Core/Authoring/DvdIfoBuilder.cs` writes minimal-but-recognizable VIDEO_TS.IFO and VTS_##_0.IFO skeletons (2048 bytes each: "DVDVIDEO-VMG" / "DVDVIDEO-VTS" signatures, spec version 1.0, volume / title-set count, provider id; the rest of the navigation tables are zero).
+- `dvdv-author <input-video> <output-folder>` CLI command. Runs ffmpeg `-target ntsc-dvd` (or pal-dvd with `--pal`) to transcode to MPEG-2 + AC-3 in DVD-PS, places the result as `VIDEO_TS/VTS_01_1.VOB` capped at the per-VOB 1 GB DVD-Video limit, writes IFO/BUP pairs for both VMG and VTS_01_0, creates the spec-required empty `AUDIO_TS/` folder.
+
+### Validated
+- Same Wallace & Gromit short used for the VCD test (~24 min, 1080p H.264) → 695 MB MPEG-2/AC-3 DVD payload in 34 sec via ffmpeg. `validate-folder` recognizes the result as well-formed DvdVideo (after a related fix below).
+
+### Fixed
+- `DiscFolderValidator` was misclassifying pure DVD-Video discs as `DvdAudioVideoHybrid` whenever the spec-required empty `AUDIO_TS\` folder was present. Now distinguishes "AUDIO_TS exists with files" (real DVD-Audio content) from "AUDIO_TS exists empty" (DVD-Video spec compliance). The DvdVideo branch's findings now affirm "AUDIO_TS\ folder present (empty is normal for pure DVD-Video)" so users don't worry it should have content.
+
+### Tests
+- 6 new `DvdIfoBuilderTests`, 1 new `DiscFolderValidatorTests` for the empty-AUDIO_TS case. Total 108 tests.
+
+### Honestly experimental
+The IFO files we write are SKELETONS — signature + version + a couple of fields, otherwise zero. A real DVD-Video IFO has nested tables (TT_SRPT, VTS_PTT_SRPT, VTS_PGCI, VTS_C_ADT, VTS_VOBU_ADMAP) that tell standalone DVD players how to navigate the disc. Building the VOBU address map alone requires scanning the VOB for NAV packets. That level of authoring is its own multi-session subsystem (or just call `dvdauthor` externally — the open-source GPL DVD-Video authoring tool that does this properly).
+
+What our skeletons get you: a folder structure that plays in **VLC, MPC-HC, and most software DVD readers** (they accept the VOBs directly). What they don't get you: standalone DVD player playback. For that, author with DVDStyler/DVDFlick/dvdauthor and `burn-folder` the result.
+
 ## [0.0.20] — 2026-05-06
 
 ### Added — Burn Audio CD GUI polish (part 1)

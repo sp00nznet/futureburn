@@ -117,6 +117,23 @@ public class DiscFolderValidatorTests : IDisposable
     }
 
     [Fact]
+    public void DvdVideoWithEmptyAudioTs_StillTypeDvdVideo()
+    {
+        // Pure DVD-Video discs are SPEC-REQUIRED to have an empty AUDIO_TS\
+        // folder. Earlier the validator misclassified this as DvdAudioVideoHybrid.
+        Make("VIDEO_TS/VIDEO_TS.IFO");
+        Make("VIDEO_TS/VIDEO_TS.BUP");
+        Make("VIDEO_TS/VTS_01_1.VOB");
+        Directory.CreateDirectory(Path.Combine(_tempDir, "AUDIO_TS"));
+        // ... but no files inside.
+
+        var v = DiscFolderValidator.Validate(_tempDir);
+        Assert.Equal(DiscFolderValidator.DiscType.DvdVideo, v.Type);
+        Assert.True(v.LooksWellFormed);
+        Assert.Contains(v.Findings, f => f.Contains("AUDIO_TS\\ folder present"));
+    }
+
+    [Fact]
     public void Vcd_TypeVideoCd_WellFormed_HasModeNote()
     {
         Make("VCD/INFO.VCD");

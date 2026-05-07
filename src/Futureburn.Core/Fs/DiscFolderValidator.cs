@@ -56,14 +56,20 @@ public static class DiscFolderValidator
         bool bdmv   = dirNames.Contains("BDMV");
         bool mpegav = dirNames.Contains("MPEGAV");
 
+        // DVD-Video requires AUDIO_TS\ to exist (per spec) but it's empty.
+        // We only count it as "DVD-Audio content" if it actually has IFO/AOB files.
+        // Otherwise a pure DVD-Video disc looks like a hybrid which it isn't.
+        bool dvdAHasContent = dvdA && Directory.Exists(Path.Combine(folder, "AUDIO_TS"))
+            && Directory.GetFiles(Path.Combine(folder, "AUDIO_TS")).Length > 0;
+
         DiscType type;
-        if      (bdmv)         type = DiscType.BluRayMovie;
-        else if (svcd)         type = DiscType.SuperVideoCd;
-        else if (vcd)          type = DiscType.VideoCd;
-        else if (dvdV && dvdA) type = DiscType.DvdAudioVideoHybrid;
-        else if (dvdV)         type = DiscType.DvdVideo;
-        else if (dvdA)         type = DiscType.DvdAudio;
-        else                   type = entries.Length == 0 ? DiscType.Unknown : DiscType.DataDisc;
+        if      (bdmv)                       type = DiscType.BluRayMovie;
+        else if (svcd)                       type = DiscType.SuperVideoCd;
+        else if (vcd)                        type = DiscType.VideoCd;
+        else if (dvdV && dvdAHasContent)     type = DiscType.DvdAudioVideoHybrid;
+        else if (dvdV)                       type = DiscType.DvdVideo;
+        else if (dvdAHasContent)             type = DiscType.DvdAudio;
+        else                                 type = entries.Length == 0 ? DiscType.Unknown : DiscType.DataDisc;
 
         // Per-type structural checks.
         return type switch
@@ -82,8 +88,15 @@ public static class DiscFolderValidator
     private static Validation CheckDvdVideo(string folder)
     {
         var ts = Path.Combine(folder, "VIDEO_TS");
+        var atsPath = Path.Combine(folder, "AUDIO_TS");
         var findings = new List<string>();
         var issues   = new List<string>();
+
+        // DVD-Video spec requires AUDIO_TS\ to exist (even empty).
+        if (!Directory.Exists(atsPath))
+            findings.Add("AUDIO_TS\\ folder not present — spec requires it (empty is fine).");
+        else
+            findings.Add("AUDIO_TS\\ folder present (empty is normal for pure DVD-Video).");
 
         bool hasIfo = File.Exists(Path.Combine(ts, "VIDEO_TS.IFO"));
         bool hasBup = File.Exists(Path.Combine(ts, "VIDEO_TS.BUP"));
