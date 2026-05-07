@@ -176,7 +176,12 @@ public sealed class SptiDevice : IDisposable
         int o = 8;
         p[o + 0]  = 0x05;       // Page Code = 5 (CD Write Parameters)
         p[o + 1]  = 0x32;       // Page Length = 50
-        p[o + 2]  = 0x01;       // WriteType = 1 (TAO), BUFE off, no test write, LS_V off
+        p[o + 2]  = 0x41;       // BUFE (bit 6) + WriteType = 1 (TAO).
+                                // BUFE = Buffer Underrun-Free Enabled (BURN-Proof).
+                                // Without this, a momentary buffer underrun trashes
+                                // the disc with a medium ECC error mid-write. Every
+                                // modern burning tool enables this; it was an
+                                // embarrassing oversight in our earlier attempts.
         p[o + 3]  = 0xC0;       // Multisession = 11 (final session), FP=0, Copy=0, TrackMode=0 (Audio CD-DA)
         p[o + 4]  = 0x00;       // DataBlockType = 0 (raw 2352-byte sectors for CD-DA)
         p[o + 5]  = 0x00;       // LinkSize

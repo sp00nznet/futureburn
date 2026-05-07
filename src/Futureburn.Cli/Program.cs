@@ -24,6 +24,7 @@ return args[0].ToLowerInvariant() switch
     "imapi-v1-info"                => ImapiV1Info(),
     "spti-info"                    => SptiInfo(args),
     "cd-info"                      => CdInfo(args),
+    "finalize"                     => FinalizeDisc(args),
     "help" or "--help" or "-h"     => PrintUsage(),
     _                              => Unknown(args[0]),
 };
@@ -59,6 +60,7 @@ static int PrintUsage()
     Console.WriteLine("  futureburn imapi-v1-info              Diagnose whether IMAPI v1 works here");
     Console.WriteLine("  futureburn spti-info <drive>          SCSI INQUIRY via SPTI (proves the SPTI path works)");
     Console.WriteLine("  futureburn cd-info <drive>            Read the disc's TOC: track listing, types, durations");
+    Console.WriteLine("  futureburn finalize <drive>           CLOSE SESSION on a disc with open tracks (salvage operation)");
     Console.WriteLine();
     Console.WriteLine("audio formats: " + string.Join(", ", AudioDecoder.SupportedExtensions));
     return 0;
@@ -611,6 +613,47 @@ static int SptiInfo(string[] args)
     catch (Exception ex)
     {
         Console.Error.WriteLine($"SPTI failed: {ex.Message}");
+        return 1;
+    }
+}
+
+static int FinalizeDisc(string[] args)
+{
+    if (args.Length < 2 || args[1].Length < 1 || !char.IsLetter(args[1][0]))
+    {
+        Console.WriteLine();
+        Console.WriteLine("usage: futureburn finalize <drive>");
+        Console.WriteLine();
+        Console.WriteLine("Issues SCSI CLOSE SESSION (opcode 0x5B function 2) to write the");
+        Console.WriteLine("disc's lead-out and TOC. Use this to salvage a partially-burned");
+        Console.WriteLine("disc that has at least one complete track but failed mid-burn.");
+        return 1;
+    }
+    char letter = char.ToUpperInvariant(args[1][0]);
+    Console.WriteLine();
+    Console.WriteLine($"Finalizing {letter}:\\ via SCSI CLOSE SESSION ...");
+    try
+    {
+        using var dev = Futureburn.Core.Spti.SptiDevice.OpenDriveLetter(letter);
+        var info = dev.ReadDiscInformation();
+        Console.WriteLine($"  Before: Status = {info.Status}, LastSession = {info.LastSessionState}");
+
+        // Close the session. function = 2 = close current session.
+        // This blocks until the drive writes the lead-out (~30-60 sec typical).
+        Console.WriteLine("  CLOSE SESSION ... (this can take a minute)");
+        dev.CloseTrackOrSession(function: 2, trackNumber: 0, timeoutSec: 300);
+
+        var after = dev.ReadDiscInformation();
+        Console.WriteLine($"  After:  Status = {after.Status}, LastSession = {after.LastSessionState}");
+        if (after.IsPlayablyFinalized)
+            Console.WriteLine("  Disc is finalized. Should play in standalone players.");
+        else
+            Console.WriteLine("  Hmm — disc still doesn't report finalized. Try `cd-info <drive>` to look closer.");
+        return 0;
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"finalize failed: {ex.Message}");
         return 1;
     }
 }
