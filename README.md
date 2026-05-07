@@ -31,6 +31,22 @@ A passion project that grew teeth.
 
 ---
 
+## Screenshots
+
+The four-tile main window — pick what you want to do:
+
+![futureburn main window](docs/screenshots/main-window.png)
+
+**Burn Audio CD** — drag in tracks, pick a drive, hit Burn. Background-thread burn with live progress and post-burn verification:
+
+![Burn Audio CD window](docs/screenshots/burn-audio-cd.png)
+
+**CD Info** — full SCSI readout of whatever's loaded: drive capabilities, finalization status, and complete TOC with per-track type and duration. Same data the CLI's `cd-info` command surfaces, just clickable:
+
+![CD Info window](docs/screenshots/cd-info.png)
+
+---
+
 ## Why this exists
 
 A non-trivial chunk of the working internet still has CD/DVD drives plugged in and is producing physical media — for cars without aux jacks, for archival, for art objects, for the principle. The software market that serves these people is hostile by default. CD-burning shareware in 2026 is what shareware was in 2002, except the bundled spyware is more sophisticated.

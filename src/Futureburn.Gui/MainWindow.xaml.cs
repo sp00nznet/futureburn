@@ -22,8 +22,9 @@ public partial class MainWindow : Window
 
     private void BurnVideo_Click(object sender, RoutedEventArgs e) =>
         OpenPlaceholder(
-            "Burn Video DVD",
-            "Video DVD burning is around v0.5. Drop in an MKV, get a watchable disc — no menus, no chapters, just the movie.");
+            "Burn Blu-ray / DVD",
+            "Drop in your MKV (or whatever) and get a disc that plays itself. No menus, no chapters, no DRM dance — just the movie. " +
+            "Coming after we lock down audio CD burning. Same drop-and-burn UX as the Burn Audio CD tile, just bigger media.");
 
     private void CdInfo_Click(object sender, RoutedEventArgs e)
     {

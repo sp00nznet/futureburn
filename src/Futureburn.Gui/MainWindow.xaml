@@ -54,8 +54,8 @@
 
       <Button Grid.Row="0" Grid.Column="1" Style="{StaticResource TileButton}" Click="BurnVideo_Click">
         <StackPanel>
-          <TextBlock Text="Burn Video DVD" FontSize="22" HorizontalAlignment="Center"/>
-          <TextBlock Text="MKV in. Watchable disc out. No menus."
+          <TextBlock Text="Burn Blu-ray / DVD" FontSize="22" HorizontalAlignment="Center"/>
+          <TextBlock Text="Drop your movie. Burn. Plays itself when the disc loads."
                      FontSize="11" Opacity="0.6" Margin="0,8,0,0"
                      HorizontalAlignment="Center"/>
         </StackPanel>

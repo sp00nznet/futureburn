@@ -22,7 +22,9 @@
       "Bash(powershell -NoProfile -Command \"Get-Volume -DriveLetter F | Format-List FileSystemLabel,FileSystem,Size,SizeRemaining,DriveType\")",
       "Bash(powershell -NoProfile -Command \"Get-Volume -DriveLetter F | Format-List FileSystemLabel,FileSystem,Size,DriveType\")",
       "PowerShell(Get-Process *)",
-      "Bash(dotnet test *)"
+      "Bash(dotnet test *)",
+      "Bash(./src/Futureburn.Gui/bin/Debug/net8.0-windows/Futureburn.Gui.exe *)",
+      "Bash(git mv *)"
     ]
   }
 }
