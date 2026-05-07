@@ -14,10 +14,11 @@ public partial class MainWindow : Window
         StatusText.Text = $"v{version} — pick a tile";
     }
 
-    private void BurnAudio_Click(object sender, RoutedEventArgs e) =>
-        OpenPlaceholder(
-            "Burn Audio CD",
-            "Audio CD burning lands in v0.1. We'll do drag-and-drop tracks, reordering, and the burn.");
+    private void BurnAudio_Click(object sender, RoutedEventArgs e)
+    {
+        var w = new BurnAudioCdWindow { Owner = this };
+        w.Show();
+    }
 
     private void BurnVideo_Click(object sender, RoutedEventArgs e) =>
         OpenPlaceholder(
