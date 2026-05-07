@@ -39,7 +39,30 @@ public static class DvdauthorLocator
         yield return "dvdauthor";   // PATH
         yield return "dvdauthor.exe";
 
-        // Chocolatey shim
+        var pf    = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+        var pfx86 = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86);
+        var lad   = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+
+        // DVDStyler bundles dvdauthor.exe — easiest install path on Windows
+        // since DVDStyler is on winget (AlexThuering.DVDStyler).
+        foreach (var styler in new[] { pf, pfx86 })
+        {
+            if (string.IsNullOrEmpty(styler)) continue;
+            var dvdStylerRoot = Path.Combine(styler, "DVDStyler");
+            yield return Path.Combine(dvdStylerRoot, "bin",   "dvdauthor.exe");
+            yield return Path.Combine(dvdStylerRoot, "tools", "dvdauthor.exe");
+            yield return Path.Combine(dvdStylerRoot,         "dvdauthor.exe");
+        }
+
+        // Scoop shim (extras bucket has dvdauthor)
+        var scoop = Environment.GetEnvironmentVariable("SCOOP");
+        if (!string.IsNullOrEmpty(scoop))
+        {
+            yield return Path.Combine(scoop, "shims", "dvdauthor.exe");
+            yield return Path.Combine(scoop, "apps",  "dvdauthor", "current", "dvdauthor.exe");
+        }
+
+        // Chocolatey shim (no current package, but kept for future)
         var choco = Environment.GetEnvironmentVariable("ChocolateyInstall");
         if (!string.IsNullOrEmpty(choco))
         {
@@ -47,16 +70,7 @@ public static class DvdauthorLocator
             yield return Path.Combine(choco, "lib", "dvdauthor", "tools", "bin", "dvdauthor.exe");
         }
 
-        // Scoop shim
-        var scoop = Environment.GetEnvironmentVariable("SCOOP");
-        if (!string.IsNullOrEmpty(scoop))
-            yield return Path.Combine(scoop, "shims", "dvdauthor.exe");
-
         // Common manual install locations
-        var pf    = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
-        var pfx86 = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86);
-        var lad   = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-
         if (!string.IsNullOrEmpty(pf))    yield return Path.Combine(pf,    "dvdauthor", "bin", "dvdauthor.exe");
         if (!string.IsNullOrEmpty(pfx86)) yield return Path.Combine(pfx86, "dvdauthor", "bin", "dvdauthor.exe");
         if (!string.IsNullOrEmpty(lad))   yield return Path.Combine(lad,   "Programs", "dvdauthor", "bin", "dvdauthor.exe");
