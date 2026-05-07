@@ -18,14 +18,15 @@ A passion project that grew teeth.
 - ✅ A four-tile WPF GUI shell, **CD Info** tile is fully wired
 - ✅ `--dry-run`, `--speed Nx`, `--force`, `--yes`, `--keep-temp` flags
 - ✅ Salvage operation for partial burns (`finalize <drive>`)
+- ✅ **ISO image burning to CD-R or DVD-R/+R/-RW/+RW** via raw SCSI (`burn-iso` CLI + Burn Blu-ray / DVD GUI tile)
+- ✅ True gapless DAO via SPTI cue sheet (experimental — `--gapless` flag; first hardware test pending)
 
 ## What's coming
 
 - ⬜ Multi-track full-album burns (working through a track-2 OS timeout edge case on the test drive)
-- ⬜ Wire the actual burn flow into the **Burn Audio CD** GUI tile
-- ⬜ Data CD/DVD burning
-- ⬜ Video DVD burning
-- ⬜ True gapless DAO burning via SPTI cue sheets
+- ⬜ Folder → ISO 9660 / Joliet / UDF builder (so you can drag a folder of files in instead of pre-building an ISO)
+- ⬜ MKV → DVD-Video pipeline (transcode + IFO/BUP/VOB authoring + UDF burn — a separate large subsystem)
+- ⬜ Blu-ray burning (when the test hardware arrives)
 - ⬜ LightScribe support — yes, really. The white whale. HP killed it in 2013, the SDK is out there, we'll find it.
 - ⬜ Mac/Linux ports — long after Windows is rock solid
 
@@ -108,6 +109,10 @@ dotnet run --project src/Futureburn.Cli -- playlist mix.m3u8
 # Burning
 dotnet run --project src/Futureburn.Cli -- burn mix.m3u8 F: --dry-run
 dotnet run --project src/Futureburn.Cli -- burn mix.m3u8 F: --engine spti --speed 16x
+
+# Burn an ISO image to a blank CD-R or DVD-R
+dotnet run --project src/Futureburn.Cli -- burn-iso ubuntu.iso F: --dry-run
+dotnet run --project src/Futureburn.Cli -- burn-iso my-disc.iso F: --speed 8x --yes
 
 # Salvage a partially-burned disc
 dotnet run --project src/Futureburn.Cli -- finalize F

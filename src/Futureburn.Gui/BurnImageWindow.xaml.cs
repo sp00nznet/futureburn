@@ -1,0 +1,207 @@
+using System.IO;
+using System.Windows;
+using System.Windows.Input;
+using Futureburn.Core.Imapi;
+using Futureburn.Core.Spti;
+
+namespace Futureburn.Gui;
+
+public partial class BurnImageWindow : Window
+{
+    private string? _isoPath;
+    private long _isoBytes;
+    private IReadOnlyList<OpticalDrive> _drives = Array.Empty<OpticalDrive>();
+    private bool _burning;
+
+    public BurnImageWindow()
+    {
+        InitializeComponent();
+        Loaded += (_, _) => RefreshDrives();
+        UpdateBurnEnabled();
+    }
+
+    private void RefreshDrives()
+    {
+        try
+        {
+            _drives = DriveEnumerator.Enumerate()
+                .Where(d => d.WritableProfiles.Any())  // any writable disc capability
+                .ToList();
+        }
+        catch (Exception ex)
+        {
+            StatusText.Text = $"Drive enumeration failed: {ex.Message}";
+            return;
+        }
+
+        DriveCombo.ItemsSource = _drives
+            .Select(d => $"{d.PrimaryMount ?? "(?)"}    {d.ProductId}")
+            .ToList();
+        if (_drives.Count > 0) DriveCombo.SelectedIndex = 0;
+        UpdateDriveDiscText();
+    }
+
+    private void ChooseIso_Click(object sender, RoutedEventArgs e)
+    {
+        var dlg = new Microsoft.Win32.OpenFileDialog
+        {
+            Filter = "Disc images|*.iso;*.img;*.bin|All files|*.*",
+            Title = "Choose an ISO image to burn",
+        };
+        if (dlg.ShowDialog(this) != true) return;
+
+        _isoPath = dlg.FileName;
+        var fi = new FileInfo(_isoPath);
+        _isoBytes = fi.Length;
+        IsoPathText.Text = _isoPath;
+        IsoSizeText.Text = $"{FormatBytes(_isoBytes)} ({_isoBytes / 2048L:N0} sectors)";
+        UpdateDiscFitText();
+        UpdateDriveDiscText();
+        UpdateBurnEnabled();
+    }
+
+    private void UpdateDiscFitText()
+    {
+        if (_isoBytes == 0)
+        {
+            DiscFitText.Text = "";
+            return;
+        }
+        // Standard disc capacities (rough):
+        //   CD-R 80 min ≈ 700 MB / 737 MB
+        //   DVD-R    ≈ 4.7 GB / 4.37 GiB
+        //   DVD-R DL ≈ 8.5 GB / 7.96 GiB
+        //   BD-R     ≈ 25 GB / 23.3 GiB
+        const long cd = 737L * 1024 * 1024;
+        const long dvd = 4_700_372_992L;
+        const long dvdDl = 8_543_666_176L;
+        const long bd = 25_025_314_816L;
+        var fits = new List<string>();
+        if (_isoBytes <= cd)    fits.Add("CD-R (700 MB)");
+        if (_isoBytes <= dvd)   fits.Add("DVD-R (4.7 GB)");
+        if (_isoBytes <= dvdDl) fits.Add("DVD-R DL (8.5 GB)");
+        if (_isoBytes <= bd)    fits.Add("BD-R (25 GB)");
+        DiscFitText.Text = fits.Count > 0
+            ? "Fits on: " + string.Join(", ", fits)
+            : "WARNING: image is larger than any standard single-layer disc.";
+    }
+
+    private void UpdateDriveDiscText()
+    {
+        if (DriveCombo.SelectedIndex < 0 || DriveCombo.SelectedIndex >= _drives.Count)
+        {
+            DriveDiscText.Text = "";
+            return;
+        }
+        var d = _drives[DriveCombo.SelectedIndex];
+        var profile = d.CurrentProfiles.FirstOrDefault(p => p.Code != 0);
+        DriveDiscText.Text = profile is null
+            ? "No disc loaded in selected drive."
+            : $"Loaded: {profile.Name}";
+    }
+
+    private void UpdateBurnEnabled()
+    {
+        BurnBtn.IsEnabled = !_burning
+            && _isoPath is not null
+            && _drives.Count > 0
+            && DriveCombo.SelectedIndex >= 0;
+    }
+
+    private async void Burn_Click(object sender, RoutedEventArgs e)
+    {
+        if (_burning || _isoPath is null) return;
+        if (DriveCombo.SelectedIndex < 0 || DriveCombo.SelectedIndex >= _drives.Count)
+        {
+            MessageBox.Show(this, "Pick a drive first.", "Burn",
+                MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        var drive = _drives[DriveCombo.SelectedIndex];
+        var speedStr = (SpeedCombo.SelectedItem as System.Windows.Controls.ComboBoxItem)?.Content?.ToString() ?? "default";
+        int? cdSpeedX = null;
+        if (speedStr.EndsWith("x") && int.TryParse(speedStr.AsSpan(0, speedStr.Length - 1), out int x))
+            cdSpeedX = x;
+
+        var summary = $"This will write {FormatBytes(_isoBytes)} to {drive.PrimaryMount}.\n\n" +
+                      $"ISO:    {_isoPath}\n" +
+                      $"Speed:  {(cdSpeedX is { } sp ? sp + "x" : "drive default")}\n\n" +
+                      $"Continue?";
+        if (MessageBox.Show(this, summary, "Confirm burn",
+                            MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
+            return;
+
+        await DoBurnAsync(drive, _isoPath, cdSpeedX);
+    }
+
+    private async Task DoBurnAsync(OpticalDrive drive, string isoPath, int? cdSpeedX)
+    {
+        _burning = true;
+        UpdateBurnEnabled();
+        Progress.Value = 0;
+        Progress.IsIndeterminate = true;
+        StatusText.Text = "Planning ...";
+
+        try
+        {
+            await Task.Run(() =>
+            {
+                var plan = SptiDataBurner.Plan(drive, isoPath);
+                Dispatcher.Invoke(() =>
+                {
+                    Progress.IsIndeterminate = false;
+                    StatusText.Text = $"Burning {FormatBytes(plan.ImageBytes)} to {drive.PrimaryMount} ...";
+                });
+
+                SptiDataBurner.ExecuteBurn(
+                    plan,
+                    requestedSpeedX: cdSpeedX,
+                    onProgress: (written, total) =>
+                    {
+                        Dispatcher.Invoke(() =>
+                        {
+                            int pct = total > 0 ? (int)(written * 100 / total) : 0;
+                            Progress.Value = pct;
+                        });
+                    });
+
+                Dispatcher.Invoke(() =>
+                {
+                    Progress.Value = 100;
+                    StatusText.Text = $"Done. {FormatBytes(plan.ImageBytes)} written, disc finalized.";
+                });
+            });
+        }
+        catch (AudioCdBurner.BurnException ex)
+        {
+            MessageBox.Show(this, ex.Message, "Burn failed",
+                MessageBoxButton.OK, MessageBoxImage.Error);
+            StatusText.Text = "Burn failed.";
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, ex.Message, "Unexpected error",
+                MessageBoxButton.OK, MessageBoxImage.Error);
+            StatusText.Text = "Burn failed (unexpected).";
+        }
+        finally
+        {
+            _burning = false;
+            Progress.IsIndeterminate = false;
+            UpdateBurnEnabled();
+        }
+    }
+
+    private static string FormatBytes(long bytes)
+    {
+        const long KB = 1024, MB = KB * 1024, GB = MB * 1024;
+        return bytes switch
+        {
+            < KB => $"{bytes} B",
+            < MB => $"{bytes / (double)KB:0.##} KB",
+            < GB => $"{bytes / (double)MB:0.##} MB",
+            _    => $"{bytes / (double)GB:0.##} GB",
+        };
+    }
+}

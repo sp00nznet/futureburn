@@ -182,6 +182,45 @@ public sealed class SptiDevice : IDisposable
     public enum CdAudioWriteMode : byte { TrackAtOnce = 1, SessionAtOnce = 2 }
 
     /// <summary>
+    /// Configure the drive for writing data sectors (Mode 1, 2048 bytes per
+    /// sector) to a blank CD-R/CD-RW. Uses TAO single-data-track layout —
+    /// the standard for ISO 9660 / Joliet data CDs.
+    /// </summary>
+    public void ConfigureForDataCd()
+    {
+        var p = new byte[8 + 52];
+        int o = 8;
+        p[o + 0]  = 0x05;       // Page Code = 5 (CD Write Parameters)
+        p[o + 1]  = 0x32;       // Page Length = 50
+        p[o + 2]  = 0x41;       // BUFE (bit 6) + WriteType = 1 (TAO)
+        p[o + 3]  = 0xC4;       // Multisession = 11 (final session) + TrackMode = 4 (Mode 1 data, recorded uninterrupted)
+        p[o + 4]  = 0x08;       // DataBlockType = 8 (Mode 1, 2048 bytes per sector)
+        p[o + 6]  = 0x20;       // Initiator App Code
+        p[o + 7]  = 0x00;       // Session Format = 0 (CD-ROM)
+        ModeSelect10(p);
+    }
+
+    /// <summary>
+    /// Configure the drive for writing data sectors to a blank DVD-R/RW/+R/+RW.
+    /// Uses SAO mode (Session-At-Once / Disc-At-Once) which is the standard for
+    /// single-image DVD writes. Most DVD recorders only do SAO/DAO for sequential
+    /// recording.
+    /// </summary>
+    public void ConfigureForDataDvd()
+    {
+        var p = new byte[8 + 52];
+        int o = 8;
+        p[o + 0]  = 0x05;       // Page Code = 5
+        p[o + 1]  = 0x32;       // Page Length = 50
+        p[o + 2]  = 0x42;       // BUFE (bit 6) + WriteType = 2 (SAO/DAO)
+        p[o + 3]  = 0xC0;       // Multisession = 11 (final session); TrackMode is mostly ignored on DVD
+        p[o + 4]  = 0x08;       // DataBlockType = 8 (Mode 1, 2048 bytes per sector)
+        p[o + 6]  = 0x20;       // App code
+        p[o + 7]  = 0x00;       // Session Format = 0
+        ModeSelect10(p);
+    }
+
+    /// <summary>
     /// Configure the drive for CD-DA TAO writing. After this call, WRITE 12
     /// commands at the current writable address will go straight onto the disc
     /// as raw 2352-byte audio sectors.

@@ -4,6 +4,17 @@ All notable changes to futureburn will land here. Format roughly follows [Keep a
 
 ## [Unreleased]
 
+## [0.0.15] — 2026-05-06
+
+### Added
+- **ISO image burning** to blank CD-R or DVD-R via raw SCSI (no IMAPI involved). New `Futureburn.Core/Spti/SptiDataBurner.cs` plus CLI command `burn-iso <iso> <drive>` with `--dry-run`, `--speed Nx`, `--yes` flags. Detects disc type from the loaded profile and picks CD-data or DVD-data MODE SELECT settings appropriately. WRITE 12 in 32-sector (64 KB) chunks with the same retry-on-Win32-121 logic the audio burner uses.
+- `SptiDevice.ConfigureForDataCd()` / `ConfigureForDataDvd()` — Mode Page 0x05 setup for data writes (Mode 1, 2048 bytes per sector, BUFE on, TAO for CD / SAO for DVD).
+- **Burn Blu-ray / DVD GUI tile is real.** `BurnImageWindow.xaml` lets you choose an ISO, pick a drive + speed, and burn. Same background-thread + Dispatcher pattern as `BurnAudioCdWindow`. Shows which standard disc capacities the chosen image fits on (CD-R / DVD-R / DVD-R DL / BD-R).
+- README's "What's coming" list reorganized to clarify the realistic next steps: folder → ISO builder, then MKV → DVD-Video transcoding (the latter being a separate large subsystem). Blu-ray burning waits for hardware.
+
+### Notes
+- ISO burning **assumes the image is pre-authored**. We don't build the file system from a folder yet — that's a separate (smaller) future task using either IMAPI's `MsftFileSystemImage` or our own UDF/ISO 9660 writer. Building DVD-Video discs from raw video files is a much bigger task involving MPEG-2 encoding and IFO/BUP/VOB authoring; that's the long-arc goal for the Burn Blu-ray / DVD tile.
+
 ## [0.0.10] — 2026-05-06
 
 ### Added

@@ -20,11 +20,11 @@ public partial class MainWindow : Window
         w.Show();
     }
 
-    private void BurnVideo_Click(object sender, RoutedEventArgs e) =>
-        OpenPlaceholder(
-            "Burn Blu-ray / DVD",
-            "Drop in your MKV (or whatever) and get a disc that plays itself. No menus, no chapters, no DRM dance — just the movie. " +
-            "Coming after we lock down audio CD burning. Same drop-and-burn UX as the Burn Audio CD tile, just bigger media.");
+    private void BurnVideo_Click(object sender, RoutedEventArgs e)
+    {
+        var w = new BurnImageWindow { Owner = this };
+        w.Show();
+    }
 
     private void CdInfo_Click(object sender, RoutedEventArgs e)
     {

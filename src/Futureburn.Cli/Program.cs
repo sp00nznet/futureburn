@@ -22,6 +22,7 @@ return args[0].ToLowerInvariant() switch
     "playlist"                     => ShowPlaylist(args),
     "mkplaylist"                   => MakePlaylist(args),
     "burn"                         => BurnCommand(args),
+    "burn-iso"                     => BurnIsoCommand(args),
     "imapi-v1-info"                => ImapiV1Info(),
     "spti-info"                    => SptiInfo(args),
     "cd-info"                      => CdInfo(args),
@@ -53,6 +54,8 @@ static int PrintUsage()
     Console.WriteLine("  futureburn decode <in> <out.wav>      Decode any audio file to a CD-format WAV");
     Console.WriteLine("  futureburn playlist <file.m3u>        Parse and list an M3U / M3U8 playlist");
     Console.WriteLine("  futureburn burn <playlist> <drive>    Burn an audio CD from a playlist");
+    Console.WriteLine("  futureburn burn-iso <iso> <drive>     Burn an ISO image to a blank CD-R or DVD-R");
+    Console.WriteLine("    flags: --dry-run, --yes, --speed Nx");
     Console.WriteLine("    flags: --dry-run     plan only, no actual burn");
     Console.WriteLine("           --speed Nx    set burn speed (v2 only; default = max supported)");
     Console.WriteLine("           --force       overwrite a non-blank disc (CD-RW only)");
@@ -229,6 +232,101 @@ static int ShowPlaylist(string[] args)
         return 0;
     }
     catch (Exception ex) { Console.Error.WriteLine($"playlist load failed: {ex.Message}"); return 1; }
+}
+
+static int BurnIsoCommand(string[] args)
+{
+    if (args.Length < 3)
+    {
+        Console.WriteLine();
+        Console.WriteLine("usage: futureburn burn-iso <iso-file> <drive> [--dry-run] [--speed Nx] [--yes]");
+        Console.WriteLine("  e.g. futureburn burn-iso ubuntu.iso F: --dry-run");
+        Console.WriteLine("       futureburn burn-iso my-disc.iso F: --speed 8x --yes");
+        return 1;
+    }
+
+    var isoPath = args[1];
+    var driveId = args[2];
+    bool dryRun      = HasFlag(args, "--dry-run");
+    bool skipConfirm = HasFlag(args, "--yes") || HasFlag(args, "-y");
+    int? cdSpeedX    = ParseSpeedFlag(args) is { } sps ? sps / 75 : null;
+
+    var drive = DriveEnumerator.Find(driveId);
+    if (drive is null)
+    {
+        Console.Error.WriteLine($"Drive not found: {driveId}");
+        return 1;
+    }
+
+    Futureburn.Core.Spti.SptiDataBurner.DataBurnPlan plan;
+    try
+    {
+        plan = Futureburn.Core.Spti.SptiDataBurner.Plan(drive, isoPath);
+    }
+    catch (AudioCdBurner.BurnException ex)
+    {
+        Console.Error.WriteLine($"\nPLAN FAILED: {ex.Message}");
+        return 1;
+    }
+
+    Console.WriteLine();
+    Console.WriteLine("--- ISO BURN PLAN ---");
+    Console.WriteLine($"  ISO:          {plan.ImagePath}");
+    Console.WriteLine($"  Size:         {FormatBytes(plan.ImageBytes)} ({plan.ImageSectors:N0} sectors of 2048 B)");
+    Console.WriteLine($"  Drive:        {drive.PrimaryMount}  {drive.VendorId} {drive.ProductId} ({drive.Revision})");
+    var profileCode = drive.CurrentProfiles.FirstOrDefault(p => p.Code != 0)?.Code ?? 0;
+    Console.WriteLine($"  Disc:         {Mmc.LookupProfile(profileCode).Name}");
+    Console.WriteLine($"  Mode:         {(plan.IsDvd ? "DVD data (SAO + Mode 1)" : "CD data (TAO + Mode 1)")}");
+    Console.WriteLine($"  Speed:        {(cdSpeedX is { } x ? x + "x" : "drive default")}");
+    Console.WriteLine();
+
+    if (dryRun)
+    {
+        Console.WriteLine("DRY RUN COMPLETE — no actual burn performed.");
+        return 0;
+    }
+
+    if (!skipConfirm)
+    {
+        Console.Write($"This will write {FormatBytes(plan.ImageBytes)} to {drive.PrimaryMount}. Continue? [y/N] ");
+        var answer = Console.ReadLine();
+        if (answer?.Trim().ToLowerInvariant() is not ("y" or "yes"))
+        {
+            Console.WriteLine("Aborted.");
+            return 0;
+        }
+    }
+
+    Console.WriteLine();
+    Console.WriteLine("Burning. Don't unplug the drive or close this window.");
+    Console.WriteLine();
+
+    int lastReportedPct = -25;
+    try
+    {
+        Futureburn.Core.Spti.SptiDataBurner.ExecuteBurn(
+            plan,
+            requestedSpeedX: cdSpeedX,
+            onLog: msg => Console.WriteLine(msg),
+            onProgress: (written, total) =>
+            {
+                int pct = total > 0 ? (int)(written * 100 / total) : 0;
+                if (pct >= lastReportedPct + 5 || written == total)
+                {
+                    Console.WriteLine($"  {pct,3}%  ({FormatBytes(written)} / {FormatBytes(total)})");
+                    lastReportedPct = pct;
+                }
+            });
+        Console.WriteLine();
+        Console.WriteLine("BURN COMPLETE. Disc finalized.");
+        return 0;
+    }
+    catch (AudioCdBurner.BurnException ex)
+    {
+        Console.Error.WriteLine();
+        Console.Error.WriteLine($"BURN FAILED: {ex.Message}");
+        return 1;
+    }
 }
 
 static int MakePlaylist(string[] args)
