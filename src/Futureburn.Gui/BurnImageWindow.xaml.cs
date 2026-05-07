@@ -1,6 +1,7 @@
 using System.IO;
 using System.Windows;
 using System.Windows.Input;
+using Futureburn.Core.Fs;
 using Futureburn.Core.Imapi;
 using Futureburn.Core.Spti;
 
@@ -10,13 +11,17 @@ public partial class BurnImageWindow : Window
 {
     private string? _isoPath;
     private long _isoBytes;
+    // If non-null we built the ISO from a folder into a temp file; clean up
+    // when we're done with it (either after burn or on window close).
+    private string? _tempBuiltIso;
     private IReadOnlyList<OpticalDrive> _drives = Array.Empty<OpticalDrive>();
     private bool _burning;
 
     public BurnImageWindow()
     {
         InitializeComponent();
-        Loaded += (_, _) => RefreshDrives();
+        Loaded  += (_, _) => RefreshDrives();
+        Closed  += (_, _) => CleanupTempIso();
         UpdateBurnEnabled();
     }
 
@@ -50,6 +55,7 @@ public partial class BurnImageWindow : Window
         };
         if (dlg.ShowDialog(this) != true) return;
 
+        CleanupTempIso();   // discard any previous folder-built temp
         _isoPath = dlg.FileName;
         var fi = new FileInfo(_isoPath);
         _isoBytes = fi.Length;
@@ -58,6 +64,74 @@ public partial class BurnImageWindow : Window
         UpdateDiscFitText();
         UpdateDriveDiscText();
         UpdateBurnEnabled();
+    }
+
+    private async void ChooseFolder_Click(object sender, RoutedEventArgs e)
+    {
+        var dlg = new Microsoft.Win32.OpenFolderDialog
+        {
+            Title = "Choose a folder to burn (we'll build the ISO 9660 + Joliet + UDF image)",
+        };
+        if (dlg.ShowDialog(this) != true) return;
+
+        var folder = dlg.FolderName;
+        var label = Path.GetFileName(folder);
+        if (string.IsNullOrEmpty(label)) label = "FUTUREBURN";
+
+        var tempIso = Path.Combine(Path.GetTempPath(), $"futureburn-build-{Guid.NewGuid():N}.iso");
+
+        StatusText.Text = $"Building ISO from {folder} ...";
+        Progress.Value = 0;
+        Progress.IsIndeterminate = false;
+        UpdateBurnEnabled();
+
+        try
+        {
+            var result = await Task.Run(() =>
+            {
+                return FsImageBuilder.Build(folder, tempIso, label,
+                    onProgress: (copied, total) =>
+                    {
+                        Dispatcher.Invoke(() =>
+                        {
+                            int pct = total > 0 ? (int)(copied * 100 / total) : 0;
+                            Progress.Value = pct;
+                        });
+                    });
+            });
+
+            // Take ownership of the temp file as our current "image source".
+            CleanupTempIso();   // (paranoid — should never have a stale one here)
+            _isoPath       = tempIso;
+            _tempBuiltIso  = tempIso;
+            _isoBytes      = result.TotalBytes;
+
+            IsoPathText.Text = $"{folder}  →  {tempIso}";
+            IsoSizeText.Text = $"{FormatBytes(_isoBytes)} ({_isoBytes / 2048L:N0} sectors of {result.BlockSize} B)";
+            StatusText.Text  = $"ISO built ({FormatBytes(_isoBytes)}). Pick a drive and Burn.";
+            Progress.Value = 100;
+
+            UpdateDiscFitText();
+            UpdateDriveDiscText();
+            UpdateBurnEnabled();
+        }
+        catch (Exception ex)
+        {
+            try { File.Delete(tempIso); } catch { }
+            MessageBox.Show(this, ex.Message, "ISO build failed",
+                MessageBoxButton.OK, MessageBoxImage.Error);
+            StatusText.Text = "ISO build failed.";
+            Progress.Value = 0;
+        }
+    }
+
+    private void CleanupTempIso()
+    {
+        if (_tempBuiltIso is not null)
+        {
+            try { File.Delete(_tempBuiltIso); } catch { }
+            _tempBuiltIso = null;
+        }
     }
 
     private void UpdateDiscFitText()

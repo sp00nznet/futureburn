@@ -23,6 +23,8 @@ return args[0].ToLowerInvariant() switch
     "mkplaylist"                   => MakePlaylist(args),
     "burn"                         => BurnCommand(args),
     "burn-iso"                     => BurnIsoCommand(args),
+    "mkiso"                        => MkIsoCommand(args),
+    "burn-folder"                  => BurnFolderCommand(args),
     "imapi-v1-info"                => ImapiV1Info(),
     "spti-info"                    => SptiInfo(args),
     "cd-info"                      => CdInfo(args),
@@ -56,6 +58,10 @@ static int PrintUsage()
     Console.WriteLine("  futureburn burn <playlist> <drive>    Burn an audio CD from a playlist");
     Console.WriteLine("  futureburn burn-iso <iso> <drive>     Burn an ISO image to a blank CD-R or DVD-R");
     Console.WriteLine("    flags: --dry-run, --yes, --speed Nx");
+    Console.WriteLine("  futureburn mkiso <folder> <out.iso>   Build an ISO 9660+Joliet+UDF image from a folder");
+    Console.WriteLine("    flags: --label NAME, --fs all|iso|joliet|udf");
+    Console.WriteLine("  futureburn burn-folder <folder> <drive>   mkiso + burn-iso, in one step (uses temp file)");
+    Console.WriteLine("    flags: --label NAME, --fs ..., --speed Nx, --dry-run, --yes, --keep-iso");
     Console.WriteLine("    flags: --dry-run     plan only, no actual burn");
     Console.WriteLine("           --speed Nx    set burn speed (v2 only; default = max supported)");
     Console.WriteLine("           --force       overwrite a non-blank disc (CD-RW only)");
@@ -328,6 +334,209 @@ static int BurnIsoCommand(string[] args)
         return 1;
     }
 }
+
+static int MkIsoCommand(string[] args)
+{
+    if (args.Length < 3)
+    {
+        Console.WriteLine();
+        Console.WriteLine("usage: futureburn mkiso <source-folder> <output.iso> [--label NAME] [--fs all|iso|joliet|udf]");
+        return 1;
+    }
+    var folder = args[1];
+    var output = args[2];
+    if (!Directory.Exists(folder))
+    {
+        Console.Error.WriteLine($"Source folder not found: {folder}");
+        return 1;
+    }
+
+    var label = FlagValue(args, "--label") ?? Path.GetFileName(Path.GetFullPath(folder));
+    var fsArg = (FlagValue(args, "--fs") ?? "all").ToLowerInvariant();
+    var fileSystems = ParseFileSystemFlag(fsArg);
+    if (fileSystems is null)
+    {
+        Console.Error.WriteLine($"Unknown --fs '{fsArg}'. Use one of: all | iso | joliet | udf");
+        return 1;
+    }
+
+    Console.WriteLine();
+    Console.WriteLine($"  Source:  {folder}");
+    Console.WriteLine($"  Output:  {output}");
+    Console.WriteLine($"  Volume:  {label}");
+    Console.WriteLine($"  FS:      {fileSystems.Value}");
+    Console.WriteLine();
+    Console.WriteLine("Building image ...");
+
+    int lastPct = -5;
+    try
+    {
+        var result = Futureburn.Core.Fs.FsImageBuilder.Build(
+            folder, output, label, fileSystems.Value,
+            (copied, total) =>
+            {
+                int pct = total > 0 ? (int)(copied * 100 / total) : 0;
+                if (pct >= lastPct + 5)
+                {
+                    Console.WriteLine($"  {pct,3}% ({FormatBytes(copied)} / {FormatBytes(total)})");
+                    lastPct = pct;
+                }
+            });
+
+        Console.WriteLine();
+        Console.WriteLine($"Wrote {FormatBytes(result.TotalBytes)} ({result.BlockCount:N0} sectors of {result.BlockSize} B) to {output}");
+        return 0;
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"mkiso failed: {ex.Message}");
+        try { File.Delete(output); } catch { }
+        return 1;
+    }
+}
+
+static int BurnFolderCommand(string[] args)
+{
+    if (args.Length < 3)
+    {
+        Console.WriteLine();
+        Console.WriteLine("usage: futureburn burn-folder <source-folder> <drive> [--label NAME] [--fs ...]");
+        Console.WriteLine("                              [--speed Nx] [--dry-run] [--yes] [--keep-iso]");
+        return 1;
+    }
+
+    var folder  = args[1];
+    var driveId = args[2];
+    if (!Directory.Exists(folder))
+    {
+        Console.Error.WriteLine($"Source folder not found: {folder}");
+        return 1;
+    }
+
+    var drive = DriveEnumerator.Find(driveId);
+    if (drive is null)
+    {
+        Console.Error.WriteLine($"Drive not found: {driveId}");
+        return 1;
+    }
+
+    var label = FlagValue(args, "--label") ?? Path.GetFileName(Path.GetFullPath(folder));
+    var fsArg = (FlagValue(args, "--fs") ?? "all").ToLowerInvariant();
+    var fileSystems = ParseFileSystemFlag(fsArg);
+    if (fileSystems is null)
+    {
+        Console.Error.WriteLine($"Unknown --fs '{fsArg}'. Use one of: all | iso | joliet | udf");
+        return 1;
+    }
+
+    int? cdSpeedX    = ParseSpeedFlag(args) is { } sps ? sps / 75 : null;
+    bool dryRun      = HasFlag(args, "--dry-run");
+    bool skipConfirm = HasFlag(args, "--yes") || HasFlag(args, "-y");
+    bool keepIso     = HasFlag(args, "--keep-iso");
+
+    var tempIso = Path.Combine(Path.GetTempPath(), $"futureburn-build-{Guid.NewGuid():N}.iso");
+
+    Console.WriteLine();
+    Console.WriteLine($"  Source: {folder}");
+    Console.WriteLine($"  Drive:  {drive.PrimaryMount}  {drive.VendorId} {drive.ProductId}");
+    Console.WriteLine($"  Volume: {label}");
+    Console.WriteLine($"  FS:     {fileSystems.Value}");
+    Console.WriteLine($"  ISO:    {tempIso}");
+    Console.WriteLine();
+
+    try
+    {
+        // Step 1: build the ISO.
+        Console.WriteLine("Building ISO ...");
+        int lastPct = -5;
+        var built = Futureburn.Core.Fs.FsImageBuilder.Build(
+            folder, tempIso, label, fileSystems.Value,
+            (copied, total) =>
+            {
+                int pct = total > 0 ? (int)(copied * 100 / total) : 0;
+                if (pct >= lastPct + 10)
+                {
+                    Console.WriteLine($"  build {pct,3}% ({FormatBytes(copied)} / {FormatBytes(total)})");
+                    lastPct = pct;
+                }
+            });
+        Console.WriteLine($"  ISO built: {FormatBytes(built.TotalBytes)} ({built.BlockCount:N0} sectors)");
+
+        if (dryRun)
+        {
+            Console.WriteLine();
+            Console.WriteLine("DRY RUN — ISO built but not burned.");
+            if (keepIso) Console.WriteLine($"ISO kept at: {tempIso}");
+            return 0;
+        }
+
+        // Step 2: burn it.
+        var plan = Futureburn.Core.Spti.SptiDataBurner.Plan(drive, tempIso);
+        Console.WriteLine();
+        Console.WriteLine($"  Disc:  {Mmc.LookupProfile(drive.CurrentProfiles.FirstOrDefault(p => p.Code != 0)?.Code ?? 0).Name}");
+        Console.WriteLine($"  Mode:  {(plan.IsDvd ? "DVD data (SAO + Mode 1)" : "CD data (TAO + Mode 1)")}");
+        Console.WriteLine($"  Speed: {(cdSpeedX is { } x ? x + "x" : "drive default")}");
+
+        if (!skipConfirm)
+        {
+            Console.Write($"\nThis will write {FormatBytes(built.TotalBytes)} to {drive.PrimaryMount}. Continue? [y/N] ");
+            var answer = Console.ReadLine();
+            if (answer?.Trim().ToLowerInvariant() is not ("y" or "yes"))
+            {
+                Console.WriteLine("Aborted.");
+                return 0;
+            }
+        }
+
+        Console.WriteLine();
+        Console.WriteLine("Burning. Don't unplug the drive or close this window.");
+        Console.WriteLine();
+
+        int lastBurnPct = -5;
+        Futureburn.Core.Spti.SptiDataBurner.ExecuteBurn(
+            plan,
+            requestedSpeedX: cdSpeedX,
+            onLog: msg => Console.WriteLine(msg),
+            onProgress: (written, total) =>
+            {
+                int pct = total > 0 ? (int)(written * 100 / total) : 0;
+                if (pct >= lastBurnPct + 5)
+                {
+                    Console.WriteLine($"  burn  {pct,3}% ({FormatBytes(written)} / {FormatBytes(total)})");
+                    lastBurnPct = pct;
+                }
+            });
+        Console.WriteLine();
+        Console.WriteLine("BURN COMPLETE. Disc finalized.");
+        return 0;
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine();
+        Console.Error.WriteLine($"FAILED: {ex.Message}");
+        return 1;
+    }
+    finally
+    {
+        if (!keepIso)
+        {
+            try { File.Delete(tempIso); } catch { }
+        }
+        else
+        {
+            Console.WriteLine($"\n(ISO kept at: {tempIso})");
+        }
+    }
+}
+
+static Futureburn.Core.Fs.FsImageBuilder.FileSystem? ParseFileSystemFlag(string s) => s switch
+{
+    "all"    => Futureburn.Core.Fs.FsImageBuilder.FileSystem.All,
+    "iso"    => Futureburn.Core.Fs.FsImageBuilder.FileSystem.Iso9660 | Futureburn.Core.Fs.FsImageBuilder.FileSystem.Joliet,
+    "joliet" => Futureburn.Core.Fs.FsImageBuilder.FileSystem.Iso9660 | Futureburn.Core.Fs.FsImageBuilder.FileSystem.Joliet,
+    "udf"    => Futureburn.Core.Fs.FsImageBuilder.FileSystem.Udf,
+    _        => null,
+};
 
 static int MakePlaylist(string[] args)
 {

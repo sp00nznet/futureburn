@@ -4,6 +4,20 @@ All notable changes to futureburn will land here. Format roughly follows [Keep a
 
 ## [Unreleased]
 
+## [0.0.16] — 2026-05-06
+
+### Added
+- **Folder → ISO image builder.** New `Futureburn.Core/Fs/FsImageBuilder.cs` wraps Windows' `IMAPI2FS.MsftFileSystemImage` COM via dynamic dispatch (same pattern as our IMAPI v2 work — no NuGet wrappers). Builds ISO 9660 + Joliet + UDF in any combination, configurable volume label, sequential-byte output to either a `Stream` or a file path.
+- CLI: `mkiso <folder> <output.iso>` builds the image to disk. Flags: `--label NAME`, `--fs all|iso|joliet|udf`.
+- CLI: `burn-folder <folder> <drive>` does mkiso + burn-iso in one step (writes to a temp ISO, burns it, cleans up). Flags: `--label`, `--fs`, `--speed`, `--dry-run`, `--yes`, `--keep-iso`.
+- GUI: BurnImageWindow gains a **Choose folder...** button. Builds the ISO in the background (Task.Run + Dispatcher progress updates), displays the source folder + temp ISO path together, cleans up the temp file when the window closes.
+
+### Validated
+- Built a 348.63 MB / 178,496-sector ISO from the 5-track whale-album folder. Mounted it via Windows (`Mount-DiskImage`); all 6 files (5 WAVs + playlist.m3u8) readable with correct sizes. ISO 9660 magic "CD001" present at byte 0x8001.
+
+### Notes
+- Initial implementation had wrong `FsiFileSystems` enum values (guessed 0x02/0x04/0x08; spec says 0x01/0x02/0x04). IMAPI2FS rejected the bogus combo with "value specified for parameter 'newVal' is not valid." Fixed and noted with a `// must match IMAPI2FS's FsiFileSystems` comment so we don't drift again.
+
 ## [0.0.15] — 2026-05-06
 
 ### Added

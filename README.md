@@ -19,12 +19,12 @@ A passion project that grew teeth.
 - ✅ `--dry-run`, `--speed Nx`, `--force`, `--yes`, `--keep-temp` flags
 - ✅ Salvage operation for partial burns (`finalize <drive>`)
 - ✅ **ISO image burning to CD-R or DVD-R/+R/-RW/+RW** via raw SCSI (`burn-iso` CLI + Burn Blu-ray / DVD GUI tile)
+- ✅ **Folder → ISO**: build an ISO 9660 + Joliet + UDF disc image from any folder (`mkiso`) or do it and burn in one step (`burn-folder`). GUI tile has a **Choose folder...** button that builds the ISO in the background.
 - ✅ True gapless DAO via SPTI cue sheet (experimental — `--gapless` flag; first hardware test pending)
 
 ## What's coming
 
 - ⬜ Multi-track full-album burns (working through a track-2 OS timeout edge case on the test drive)
-- ⬜ Folder → ISO 9660 / Joliet / UDF builder (so you can drag a folder of files in instead of pre-building an ISO)
 - ⬜ MKV → DVD-Video pipeline (transcode + IFO/BUP/VOB authoring + UDF burn — a separate large subsystem)
 - ⬜ Blu-ray burning (when the test hardware arrives)
 - ⬜ LightScribe support — yes, really. The white whale. HP killed it in 2013, the SDK is out there, we'll find it.
@@ -113,6 +113,12 @@ dotnet run --project src/Futureburn.Cli -- burn mix.m3u8 F: --engine spti --spee
 # Burn an ISO image to a blank CD-R or DVD-R
 dotnet run --project src/Futureburn.Cli -- burn-iso ubuntu.iso F: --dry-run
 dotnet run --project src/Futureburn.Cli -- burn-iso my-disc.iso F: --speed 8x --yes
+
+# Build an ISO from a folder (ISO 9660 + Joliet + UDF; max compatibility)
+dotnet run --project src/Futureburn.Cli -- mkiso "C:\my-files" out.iso --label MYDISC
+
+# Build + burn in one step
+dotnet run --project src/Futureburn.Cli -- burn-folder "C:\my-files" F: --label MYDISC --speed 8x
 
 # Salvage a partially-burned disc
 dotnet run --project src/Futureburn.Cli -- finalize F

@@ -8,7 +8,8 @@
   <DockPanel>
 
     <ToolBar DockPanel.Dock="Top">
-      <Button Content="Choose ISO..." Click="ChooseIso_Click" Padding="10,4"/>
+      <Button Content="Choose ISO..."    Click="ChooseIso_Click"    Padding="10,4"/>
+      <Button Content="Choose folder..." Click="ChooseFolder_Click" Padding="10,4"/>
       <Separator/>
       <TextBlock Text="Drive:" VerticalAlignment="Center" Margin="6,0,4,0"/>
       <ComboBox x:Name="DriveCombo" Width="240"/>
@@ -40,9 +41,9 @@
         <RowDefinition Height="Auto"/>
       </Grid.RowDefinitions>
 
-      <TextBlock Grid.Row="0" FontSize="14" Margin="0,0,0,12">
-        <Run Text="Burn a pre-built ISO image to a blank disc. "/>
-        <Run FontStyle="Italic" Text="Authoring discs from raw video files (MKV → DVD-Video) is on the roadmap; for now, drop in a pre-authored ISO."/>
+      <TextBlock Grid.Row="0" FontSize="14" Margin="0,0,0,12" TextWrapping="Wrap">
+        <Run Text="Burn a pre-built ISO image, or a folder of files (we'll build the ISO 9660+Joliet+UDF for you). "/>
+        <Run FontStyle="Italic" Text="MKV → DVD-Video transcoding is on the long-term roadmap; for now, give us an ISO or a folder."/>
       </TextBlock>
 
       <Border Grid.Row="1"
