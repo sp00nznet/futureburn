@@ -232,7 +232,7 @@ static int BurnCommand(string[] args)
     bool force       = HasFlag(args, "--force");
     bool skipConfirm = HasFlag(args, "--yes") || HasFlag(args, "-y");
     bool keepTemp    = HasFlag(args, "--keep-temp");
-    int? speedKbps   = ParseSpeedFlag(args);
+    int? speedSps    = ParseSpeedFlag(args);
 
     if (!File.Exists(playlistPath)) { Console.Error.WriteLine($"Playlist not found: {playlistPath}"); return 1; }
 
@@ -262,7 +262,7 @@ static int BurnCommand(string[] args)
     AudioCdBurner.BurnPlan plan;
     try
     {
-        plan = AudioCdBurner.Plan(drive, playlist, tempDir, speedKbps, allowNonBlank: force);
+        plan = AudioCdBurner.Plan(drive, playlist, tempDir, speedSps, allowNonBlank: force);
     }
     catch (AudioCdBurner.BurnException ex)
     {
@@ -300,9 +300,9 @@ static int BurnCommand(string[] args)
 
     Console.WriteLine();
     Console.WriteLine($"  Total time:    {plan.TotalDuration:mm\\:ss}  ({plan.TotalSectors:N0} sectors)");
-    Console.WriteLine($"  Speed:         {AudioCdBurner.KbpsToCdX(plan.ChosenSpeedKbps)}x ({plan.ChosenSpeedKbps:N0} KB/s)");
-    if (plan.SupportedSpeedsKbps.Count > 0)
-        Console.WriteLine($"  Supported:     {string.Join(", ", plan.SupportedSpeedsKbps.Select(s => $"{AudioCdBurner.KbpsToCdX(s)}x"))}");
+    Console.WriteLine($"  Speed:         {AudioCdBurner.SpsToCdX(plan.ChosenSpeedSps)}x ({plan.ChosenSpeedSps:N0} sectors/sec)");
+    if (plan.SupportedSpeedsSps.Count > 0)
+        Console.WriteLine($"  Supported:     {string.Join(", ", plan.SupportedSpeedsSps.Select(s => $"{AudioCdBurner.SpsToCdX(s)}x"))}");
     if (plan.EstimatedBurnTime > TimeSpan.Zero)
         Console.WriteLine($"  Est. burn time: ~{plan.EstimatedBurnTime:mm\\:ss}  (write only; finalization adds ~30 sec)");
     Console.WriteLine();
@@ -367,10 +367,10 @@ static int? ParseSpeedFlag(string[] args)
     var v = FlagValue(args, "--speed");
     if (v is null) return null;
     var s = v.Trim().ToLowerInvariant();
-    // Accept "16x", "16", "150kbps" — for now just N or Nx.
+    // Accept "16x" or "16" — both mean 16x audio CD speed (= 1200 sectors/sec).
     if (s.EndsWith("x")) s = s[..^1];
     if (int.TryParse(s, out int n) && n > 0)
-        return n * AudioCdBurner.CdAudio1xKbps;
+        return AudioCdBurner.CdXToSps(n);
     return null;
 }
 

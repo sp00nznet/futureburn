@@ -87,6 +87,10 @@ public static class DiscInspector
                 try { format.Recorder = recorder; }
                 catch (COMException) { return null; }
 
+                // (Note: IDiscFormat2Data has no separate PrepareMedia — its Write is atomic.
+                // The properties below should be readable for any disc the data-format
+                // object accepted via Recorder=. For unsuitable discs we get a COMException
+                // here and treat it as "format details unavailable.")
                 try
                 {
                     long totalSec  = Convert.ToInt32(format.TotalSectorsOnMedia);

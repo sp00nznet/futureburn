@@ -9,8 +9,8 @@ public static class AudioCdBurner
 {
     public sealed record TrackPlan(
         int Index,
-        string SourcePath,        // path from playlist
-        string BurnPath,          // either same as SourcePath (if CD-format WAV) or temp decoded WAV
+        string SourcePath,        // path from the playlist
+        string BurnPath,          // either same as SourcePath (if CD-format WAV) or a temp decoded WAV
         bool RequiredDecode,      // true if we wrote a temp file
         TimeSpan Duration,
         long Sectors,
@@ -23,16 +23,16 @@ public static class AudioCdBurner
         long DiscFreeSectors,
         long DiscTotalSectors,
         bool DiscIsBlank,
-        int ChosenSpeedKbps,
-        IReadOnlyList<int> SupportedSpeedsKbps,
+        int ChosenSpeedSps,                    // sectors per second (1x = 75)
+        IReadOnlyList<int> SupportedSpeedsSps,
         string TempDir)
     {
         public TimeSpan TotalDuration =>
             TimeSpan.FromSeconds((double)TotalSectors / CdFormat.SectorsPerSecond);
 
         public TimeSpan EstimatedBurnTime =>
-            ChosenSpeedKbps > 0
-                ? TimeSpan.FromSeconds(TotalSectors / (double)(CdFormat.SectorsPerSecond * KbpsToCdX(ChosenSpeedKbps)))
+            ChosenSpeedSps > 0
+                ? TimeSpan.FromSeconds(TotalSectors / (double)ChosenSpeedSps)
                 : TimeSpan.Zero;
     }
 
@@ -42,24 +42,20 @@ public static class AudioCdBurner
         public BurnException(string message, Exception inner) : base(message, inner) { }
     }
 
-    // Audio CD 1x speed = 150 KB/s (or 176.4 KB/s if you include the 2352-byte raw frames,
-    // but IMAPI2 reports speeds in terms of 150 KB/s so we use that).
-    public const int CdAudio1xKbps = 150;
-    public static int KbpsToCdX(int kbps) => kbps / CdAudio1xKbps;
-    public static int CdXToKbps(int x) => x * CdAudio1xKbps;
+    // Audio CD speeds: 1x = 75 sectors/sec (one CD frame per 1/75 sec).
+    // IDiscFormat2TrackAtOnce reports SupportedWriteSpeeds in sectors-per-second.
+    public const int CdAudio1xSps = 75;
+    public static int SpsToCdX(int sps) => sps / CdAudio1xSps;
+    public static int CdXToSps(int x)   => x * CdAudio1xSps;
 
-    /// <summary>
-    /// Validate the burn request and prepare a plan. Doesn't burn anything
-    /// (but may write decoded temp WAVs into <paramref name="tempDir"/>).
-    /// </summary>
     public static BurnPlan Plan(
         OpticalDrive drive,
         Playlist playlist,
         string tempDir,
-        int? requestedSpeedKbps,
+        int? requestedSpeedSps,
         bool allowNonBlank)
     {
-        // 1. The disc must be a CD-R or CD-RW. Audio CD format won't work on DVD/BD.
+        // 1. Disc must be CD-R or CD-RW.
         var profileCode = drive.CurrentProfiles.FirstOrDefault(p => p.Code != 0)?.Code ?? 0;
         if (profileCode == 0)
             throw new BurnException($"No disc in {drive.PrimaryMount ?? drive.UniqueId}.");
@@ -70,29 +66,10 @@ public static class AudioCdBurner
                 $"Loaded disc is {name}, not a CD-R or CD-RW. Audio CDs require CD-R or CD-RW media.");
         }
 
-        // 1a. Quick blank-ness pre-check via MsftDiscFormat2Data (DiscInspector).
-        // If even the data-format won't read the disc's capacity, IMAPI's TAO path
-        // will also fail later with a cryptic "mode page not present" SCSI error.
-        // Surfacing this clearly here saves the user from puzzling over that.
-        try
-        {
-            var quickLook = DiscInspector.InspectDrive(drive);
-            if (!quickLook.HasFormatDetails)
-            {
-                var media = quickLook.MediaTypeName;
-                throw new BurnException(
-                    $"The {media} in {drive.PrimaryMount ?? drive.UniqueId} doesn't look fresh. " +
-                    "Both the data and TAO format objects refuse to read its capacity, which is the " +
-                    "symptom of an already-written CD-R, a finalized disc, or an existing audio CD. " +
-                    (profileCode == 0x0009
-                        ? "CD-R is write-once — used discs can't be re-burned. Insert a blank CD-R."
-                        : "Try erasing the CD-RW first (erase command coming in v0.0.7)."));
-            }
-        }
-        catch (DiscInspector.NoMediaException ex) { throw new BurnException(ex.Message, ex); }
-        // Other exceptions from InspectDrive: let them surface unchanged.
+        // (No DiscInspector pre-check — DiscInspector can't read blank-CD-R details
+        // either without PrepareMedia. We rely on QueryDisc's PrepareMedia attempt.)
 
-        // 2. For each track: locate, probe, decode-if-needed.
+        // 2. Decode (or pass through) each playlist track.
         Directory.CreateDirectory(tempDir);
         var trackPlans = new List<TrackPlan>();
         long totalSectors = 0;
@@ -125,29 +102,29 @@ public static class AudioCdBurner
             }
 
             var sectors = CdFormat.SectorsForDuration(info.Duration);
-            // IMAPI minimum audio track is 4 seconds = 300 sectors. Refuse tiny ones.
+            // IMAPI minimum audio track is 4 seconds = 300 sectors.
             if (sectors < 300)
                 throw new BurnException(
                     $"Track {idx} ({info.Duration.TotalSeconds:0.0}s) is shorter than the CD minimum (4 seconds).");
 
             trackPlans.Add(new TrackPlan(
-                Index:           idx,
-                SourcePath:      entry.Path,
-                BurnPath:        burnPath,
-                RequiredDecode:  decoded,
-                Duration:        info.Duration,
-                Sectors:         sectors,
-                Title:           entry.Title));
+                Index:          idx,
+                SourcePath:     entry.Path,
+                BurnPath:       burnPath,
+                RequiredDecode: decoded,
+                Duration:       info.Duration,
+                Sectors:        sectors,
+                Title:          entry.Title));
 
             totalSectors += sectors;
             idx++;
         }
 
-        // 3. Probe the loaded disc via TAO format object.
-        var (discFreeSec, discTotalSec, existingTracks, supportedSpeedsKbps) = QueryDisc(drive);
+        // 3. Probe the loaded disc via TAO.
+        var (discFreeSec, discTotalSec, existingTracks, supportedSpeedsSps) = QueryDisc(drive);
         bool isBlank = existingTracks == 0;
 
-        // 4. Validate capacity.
+        // 4. Capacity.
         if (totalSectors > discFreeSec)
         {
             throw new BurnException(
@@ -155,31 +132,30 @@ public static class AudioCdBurner
                 $"but disc has only {discFreeSec:N0} sectors free ({discFreeSec / (double)(CdFormat.SectorsPerSecond * 60):0.00} min).");
         }
 
-        // 5. Validate speed selection.
+        // 5. Speed selection.
         int chosenSpeed;
-        if (requestedSpeedKbps.HasValue)
+        if (requestedSpeedSps.HasValue)
         {
-            if (supportedSpeedsKbps.Count > 0 && !supportedSpeedsKbps.Contains(requestedSpeedKbps.Value))
+            if (supportedSpeedsSps.Count > 0 && !supportedSpeedsSps.Contains(requestedSpeedSps.Value))
             {
                 var supportedList = string.Join(", ",
-                    supportedSpeedsKbps.Select(s => $"{KbpsToCdX(s)}x ({s} KB/s)"));
+                    supportedSpeedsSps.Select(s => $"{SpsToCdX(s)}x"));
                 throw new BurnException(
-                    $"Speed {KbpsToCdX(requestedSpeedKbps.Value)}x ({requestedSpeedKbps.Value} KB/s) " +
-                    $"not supported by drive for this disc.\n  Supported: {supportedList}");
+                    $"Speed {SpsToCdX(requestedSpeedSps.Value)}x not supported by drive for this disc. " +
+                    $"Supported: {supportedList}");
             }
-            chosenSpeed = requestedSpeedKbps.Value;
+            chosenSpeed = requestedSpeedSps.Value;
         }
         else
         {
-            chosenSpeed = supportedSpeedsKbps.Count > 0 ? supportedSpeedsKbps.Max() : 0;
+            chosenSpeed = supportedSpeedsSps.Count > 0 ? supportedSpeedsSps.Max() : 0;
         }
 
-        // 6. Validate blank-ness (unless --force).
+        // 6. Blank-ness.
         if (!isBlank && !allowNonBlank)
         {
             throw new BurnException(
-                $"Disc has {existingTracks} existing track(s). " +
-                "Use --force to overwrite (only works on CD-RW; CD-R can't be erased).");
+                $"Disc has {existingTracks} existing track(s). Use --force to overwrite (CD-RW only).");
         }
 
         return new BurnPlan(
@@ -189,36 +165,29 @@ public static class AudioCdBurner
             DiscFreeSectors:      discFreeSec,
             DiscTotalSectors:     discTotalSec,
             DiscIsBlank:          isBlank,
-            ChosenSpeedKbps:      chosenSpeed,
-            SupportedSpeedsKbps:  supportedSpeedsKbps,
+            ChosenSpeedSps:       chosenSpeed,
+            SupportedSpeedsSps:   supportedSpeedsSps,
             TempDir:              tempDir);
     }
 
-    /// <summary>
-    /// Burn the planned tracks. This blocks per-track for the duration of
-    /// each track's write. Caller is expected to have confirmed the action.
-    /// </summary>
     public static void ExecuteBurn(BurnPlan plan, Action<int, int>? onTrackStart = null)
     {
-        var recorderType = Type.GetTypeFromProgID("IMAPI2.MsftDiscRecorder2")
-            ?? throw new BurnException("IMAPI2 recorder COM class missing.");
-        var taoType = Type.GetTypeFromProgID("IMAPI2.MsftDiscFormat2TrackAtOnce")
-            ?? throw new BurnException("IMAPI2 TAO format COM class missing.");
-
-        dynamic recorder = Activator.CreateInstance(recorderType)!;
+        IDiscRecorder2 recorder = (IDiscRecorder2)new MsftDiscRecorder2Class();
         try
         {
             recorder.InitializeDiscRecorder(plan.Drive.UniqueId);
-            recorder.AcquireExclusiveAccess(false, "futureburn");
+            recorder.AcquireExclusiveAccess(force: true, clientName: "futureburn");
 
             try
             {
-                dynamic tao = Activator.CreateInstance(taoType)!;
+                IDiscFormat2TrackAtOnce tao = (IDiscFormat2TrackAtOnce)new MsftDiscFormat2TrackAtOnceClass();
                 try
                 {
-                    tao.ClientName          = "futureburn";
-                    tao.Recorder            = recorder;
-                    tao.RequestedWriteSpeed = plan.ChosenSpeedKbps;
+                    tao.put_ClientName("futureburn");
+                    tao.put_Recorder(recorder);
+
+                    if (plan.ChosenSpeedSps > 0)
+                        tao.SetWriteSpeed(plan.ChosenSpeedSps, rotationTypeIsPureCAV: false);
 
                     tao.PrepareMedia();
 
@@ -252,61 +221,74 @@ public static class AudioCdBurner
         }
     }
 
-    // Open the TAO format object briefly to query disc state and supported speeds.
-    private static (long freeSec, long totalSec, int existingTracks, IReadOnlyList<int> speedsKbps)
+    // Open a TAO format object briefly to query disc state and supported speeds.
+    private static (long freeSec, long totalSec, int existingTracks, IReadOnlyList<int> speedsSps)
         QueryDisc(OpticalDrive drive)
     {
-        var recorderType = Type.GetTypeFromProgID("IMAPI2.MsftDiscRecorder2")
-            ?? throw new BurnException("IMAPI2 recorder COM class missing.");
-        var taoType = Type.GetTypeFromProgID("IMAPI2.MsftDiscFormat2TrackAtOnce")
-            ?? throw new BurnException("IMAPI2 TAO format COM class missing.");
-
-        dynamic recorder = Activator.CreateInstance(recorderType)!;
+        IDiscRecorder2 recorder = (IDiscRecorder2)new MsftDiscRecorder2Class();
         try
         {
             recorder.InitializeDiscRecorder(drive.UniqueId);
-            dynamic tao = Activator.CreateInstance(taoType)!;
+
+            try { recorder.AcquireExclusiveAccess(force: true, clientName: "futureburn"); }
+            catch (COMException ex)
+            {
+                throw new BurnException(
+                    $"Couldn't take exclusive access of {drive.PrimaryMount ?? drive.UniqueId} " +
+                    $"(HRESULT 0x{(uint)ex.HResult:X8}): {ex.Message}", ex);
+            }
+
             try
             {
-                tao.ClientName = "futureburn";
-                try { tao.Recorder = recorder; }
-                catch (COMException ex)
-                {
-                    throw new BurnException(
-                        $"Couldn't open the disc for audio writing (HRESULT 0x{(uint)ex.HResult:X8}): {ex.Message}. " +
-                        "The disc may be already finalized or unsuitable for audio.", ex);
-                }
-
-                // PrepareMedia is required before TotalSectorsOnMedia / FreeSectorsOnMedia /
-                // NumberOfExistingTracks / SupportedWriteSpeeds are readable. It reserves the
-                // drive but writes nothing. Releasing the COM object below aborts the
-                // session cleanly — no AddAudioTrack means nothing committed to the disc.
-                try { tao.PrepareMedia(); }
-                catch (COMException ex)
-                {
-                    throw new BurnException(
-                        $"PrepareMedia failed (HRESULT 0x{(uint)ex.HResult:X8}): {ex.Message}. " +
-                        "The disc is probably finalized or otherwise unsuitable.", ex);
-                }
-
-                long totalSec       = Convert.ToInt32(tao.TotalSectorsOnMedia);
-                long freeSec        = Convert.ToInt32(tao.FreeSectorsOnMedia);
-                int  existing       = Convert.ToInt32(tao.NumberOfExistingTracks);
-
-                var speeds = new List<int>();
+                IDiscFormat2TrackAtOnce tao = (IDiscFormat2TrackAtOnce)new MsftDiscFormat2TrackAtOnceClass();
                 try
                 {
-                    var arr = (Array?)tao.SupportedWriteSpeeds;
-                    if (arr is not null)
-                        for (int i = 0; i < arr.Length; i++)
-                            speeds.Add(Convert.ToInt32(arr.GetValue(i)));
-                    speeds = speeds.Distinct().OrderBy(s => s).ToList();
-                }
-                catch { /* leave empty if not available */ }
+                    tao.put_ClientName("futureburn");
 
-                return (freeSec, totalSec, existing, speeds);
+                    try { tao.put_Recorder(recorder); }
+                    catch (COMException ex)
+                    {
+                        throw new BurnException(
+                            $"Couldn't open the disc for audio writing (HRESULT 0x{(uint)ex.HResult:X8}): {ex.Message}. " +
+                            "The disc may be finalized or unsuitable for audio.", ex);
+                    }
+
+                    // PrepareMedia is required before TotalSectorsOnMedia / FreeSectorsOnMedia /
+                    // NumberOfExistingTracks / SupportedWriteSpeeds are readable. It reserves
+                    // the drive but writes nothing — releasing the COM object below aborts
+                    // the session cleanly (no AddAudioTrack means nothing committed).
+                    try { tao.PrepareMedia(); }
+                    catch (COMException ex)
+                    {
+                        var hr = (uint)ex.HResult;
+                        var profile = drive.CurrentProfiles.FirstOrDefault(p => p.Code != 0)?.Code ?? 0;
+                        var hint = profile == 0x0009
+                            ? "The CD-R probably already has data on it (CD-R is write-once)."
+                            : profile == 0x000A
+                                ? "The CD-RW may need to be erased first."
+                                : "The disc may be finalized or unsuitable for audio writing.";
+                        throw new BurnException(
+                            $"PrepareMedia failed (HRESULT 0x{hr:X8}): {ex.Message}\n  {hint}", ex);
+                    }
+
+                    long totalSec = tao.get_TotalSectorsOnMedia();
+                    long freeSec  = tao.get_FreeSectorsOnMedia();
+                    int  existing = tao.get_NumberOfExistingTracks();
+
+                    int[] speedsArr;
+                    try { speedsArr = tao.get_SupportedWriteSpeeds() ?? Array.Empty<int>(); }
+                    catch { speedsArr = Array.Empty<int>(); }
+
+                    var speeds = speedsArr.Distinct().OrderBy(s => s).ToArray();
+
+                    return (freeSec, totalSec, existing, speeds);
+                }
+                finally { Marshal.FinalReleaseComObject(tao); }
             }
-            finally { Marshal.FinalReleaseComObject(tao); }
+            finally
+            {
+                try { recorder.ReleaseExclusiveAccess(); } catch { /* best-effort */ }
+            }
         }
         finally { Marshal.FinalReleaseComObject(recorder); }
     }
