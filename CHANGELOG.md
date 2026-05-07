@@ -4,6 +4,18 @@ All notable changes to futureburn will land here. Format roughly follows [Keep a
 
 ## [Unreleased]
 
+## [0.0.9] — 2026-05-06
+
+### Added
+- `SptiDevice.ReadDiscInformation()` — SCSI MMC READ DISC INFORMATION (opcode 0x51). Returns Disc Status (Empty/Incomplete/Finalized/Other), State of Last Session (Empty/Incomplete/Reserved/Complete), session count, disc type, and erasable flag. This is the authoritative answer to "is this disc finalized?" — finalized + complete = will play in any standalone CD player.
+- `cd-info` now reports the disc-info fields above before the TOC, with a friendly "will play in standalone players" / "NOT fully finalized" annotation.
+
+### Fixed
+- Initial bit parsing of READ DISC INFORMATION byte 2 was wrong — had Disc Status in bits 7-6, but per MMC-6 it's in bits 1-0 (and State of Last Session is in bits 3-2). Caught when a known-finalized 19-track audio CD reported "Empty" with "Reserved" session state. Fixed to match the spec.
+
+### Validated
+- The user's previously-burned puck disc (CDBurnerXP from the same playlist) reports **Disc Status: Finalized, Last Session: Complete** — definitive proof the disc is structurally fine. Any playback failure (VLC's longstanding Windows CD-DA bugs being the prime suspect) is a player-side issue.
+
 ## [0.0.8] — 2026-05-06
 
 ### Added

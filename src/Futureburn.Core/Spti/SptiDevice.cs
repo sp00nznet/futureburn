@@ -76,6 +76,34 @@ public sealed class SptiDevice : IDisposable
         public bool HasData  => Tracks.Any(t => !t.IsAudio);
     }
 
+    public enum DiscStatus  { Empty = 0, Incomplete = 1, Finalized = 2, Other = 3 }
+    public enum SessionState { Empty = 0, Incomplete = 1, Reserved = 2, Complete = 3 }
+
+    public sealed record DiscInformation(
+        DiscStatus Status,
+        SessionState LastSessionState,
+        bool Erasable,
+        int Sessions,
+        int FirstTrack,
+        int LastTrackInLastSession,
+        byte DiscTypeCode,
+        bool DiscIdValid,
+        uint DiscId)
+    {
+        public string DiscTypeName => DiscTypeCode switch
+        {
+            0x00 => "CD-DA or CD-ROM",
+            0x10 => "CD-i",
+            0x20 => "CD-ROM XA",
+            0xFF => "Undefined",
+            _    => $"Unknown 0x{DiscTypeCode:X2}",
+        };
+
+        // The most user-relevant bottom-line: is this disc playable in a normal CD player?
+        // "Finalized + Complete" means: yes. Anything else: probably not.
+        public bool IsPlayablyFinalized => Status == DiscStatus.Finalized && LastSessionState == SessionState.Complete;
+    }
+
     /// <summary>
     /// MMC INQUIRY (opcode 0x12) — returns standard inquiry data including
     /// vendor / product / firmware revision strings. Always supported by every
@@ -98,6 +126,62 @@ public sealed class SptiDevice : IDisposable
         string product  = Encoding.ASCII.GetString(data, 16, 16).Trim();
         string revision = Encoding.ASCII.GetString(data, 32, 4).Trim();
         return new InquiryResult(vendor, product, revision);
+    }
+
+    /// <summary>
+    /// MMC READ DISC INFORMATION (opcode 0x51) data type 0 — the authoritative
+    /// answer to "is this disc finalized?". A disc that's `DiscStatus.Finalized`
+    /// AND `SessionState.Complete` should play in any standalone CD player.
+    /// Anything else (Incomplete / Empty / Damaged) means the writing software
+    /// didn't close the disc, and players will likely refuse it.
+    /// </summary>
+    public DiscInformation ReadDiscInformation()
+    {
+        var data = new byte[34];
+        var cdb = new byte[10];
+        cdb[0] = MmcOpcodes.ReadDiscInformation;
+        cdb[1] = 0x00;  // data type: 0 = standard disc information
+        cdb[7] = (byte)(data.Length >> 8);
+        cdb[8] = (byte)(data.Length & 0xFF);
+        SendScsi(cdb, cdbLength: 10, data, dataIn: true);
+
+        // MMC-6 layout (bytes 0-31):
+        //   0-1   Disc Information Length (excluding these 2 bytes)
+        //   2     Reserved (bits 7-5) | Erasable (bit 4) | State of Last Session (bits 3-2) | Disc Status (bits 1-0)
+        //   3     Number of First Track on Disc (low byte)
+        //   4     Number of Sessions (low byte)
+        //   5     First Track Number in Last Session (low byte)
+        //   6     Last Track Number in Last Session (low byte)
+        //   7     DID_V/DBC_V/URU/DAC_V/Legacy/BG Format Status flags
+        //   8     Disc Type (00=CD-DA/CD-ROM, 10=CD-i, 20=CD-ROM XA, FF=Undefined)
+        //   9     Number of Sessions (high byte)
+        //   10    First Track Number in Last Session (high byte)
+        //   11    Last Track Number in Last Session (high byte)
+        //   12-15 Disc Identification (32-bit)
+        //
+        // Disc Status:        00=Empty 01=Incomplete 10=Finalized 11=Other
+        // State of Last Sess: 00=Empty 01=Incomplete 10=Reserved   11=Complete
+        // A properly closed CD-R yields byte 2 = 0x0E (status 10 + LSS 11 + erasable 0).
+        var status        = (DiscStatus)(data[2] & 0x03);
+        bool erasable     = (data[2] & 0x10) != 0;
+        var sessionState  = (SessionState)((data[2] >> 2) & 0x03);
+        int firstTrack    = data[3];
+        int sessions      = (data[9] << 8) | data[4];
+        int lastTrack     = (data[11] << 8) | data[6];
+        byte discTypeCode = data[8];
+        bool didValid     = (data[7] & 0x80) != 0;
+        uint discId       = (uint)((data[12] << 24) | (data[13] << 16) | (data[14] << 8) | data[15]);
+
+        return new DiscInformation(
+            Status:                  status,
+            LastSessionState:        sessionState,
+            Erasable:                erasable,
+            Sessions:                sessions,
+            FirstTrack:              firstTrack,
+            LastTrackInLastSession:  lastTrack,
+            DiscTypeCode:            discTypeCode,
+            DiscIdValid:             didValid,
+            DiscId:                  discId);
     }
 
     /// <summary>

@@ -528,6 +528,17 @@ static int CdInfo(string[] args)
         using var dev = Futureburn.Core.Spti.SptiDevice.OpenDriveLetter(letter);
         var inq = dev.Inquiry();
         Console.WriteLine($"  Drive: {inq.Vendor} {inq.Product} ({inq.Revision})");
+
+        var info = dev.ReadDiscInformation();
+        Console.WriteLine();
+        Console.WriteLine($"  Disc Status:    {info.Status}{(info.IsPlayablyFinalized ? "  (will play in standalone players)" : "  (NOT fully finalized — players may refuse it)")}");
+        Console.WriteLine($"  Last Session:   {info.LastSessionState}");
+        Console.WriteLine($"  Sessions:       {info.Sessions}");
+        Console.WriteLine($"  Erasable:       {(info.Erasable ? "yes" : "no")}");
+        Console.WriteLine($"  Disc Type:      {info.DiscTypeName}  (raw 0x{info.DiscTypeCode:X2})");
+        if (info.DiscIdValid)
+            Console.WriteLine($"  Disc ID:        0x{info.DiscId:X8}");
+
         var toc = dev.ReadToc();
         Console.WriteLine();
         Console.WriteLine($"  Tracks {toc.FirstTrackNumber}-{toc.LastTrackNumber} " +
@@ -535,8 +546,8 @@ static int CdInfo(string[] args)
         var typeLabel = toc.HasAudio && toc.HasData ? "Mixed-mode (audio + data)"
                        : toc.HasAudio                ? "Audio CD"
                                                      : "Data disc";
-        Console.WriteLine($"  Disc type: {typeLabel}");
-        Console.WriteLine($"  Total time: {toc.TotalDuration:hh\\:mm\\:ss}");
+        Console.WriteLine($"  Disc layout:    {typeLabel}");
+        Console.WriteLine($"  Total time:     {toc.TotalDuration:hh\\:mm\\:ss}");
         Console.WriteLine();
         Console.WriteLine("   #   Type             Start LBA       Length      Duration");
         Console.WriteLine("  --  ---------------  ------------  ------------  --------");
