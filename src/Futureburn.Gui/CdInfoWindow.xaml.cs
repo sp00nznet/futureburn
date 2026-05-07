@@ -2,6 +2,7 @@ using System.Text;
 using System.Windows;
 using System.Windows.Controls;
 using Futureburn.Core.Imapi;
+using Futureburn.Core.Spti;
 
 namespace Futureburn.Gui;
 
@@ -99,7 +100,68 @@ public partial class CdInfoWindow : Window
         {
             sb.AppendLine($"Couldn't inspect: {ex.Message}");
         }
+
+        // SPTI-based deeper read: disc-finalization status + TOC track listing.
+        // This works on any disc with a readable TOC — audio CDs, finalized
+        // CD-Rs, mixed-mode discs. Fails gracefully if the drive is busy
+        // or the OS won't grant SCSI pass-through (rare).
+        AppendSptiDetails(sb, d);
+
         return sb.ToString();
+    }
+
+    private static void AppendSptiDetails(StringBuilder sb, OpticalDrive d)
+    {
+        var mount = d.PrimaryMount;
+        if (mount is null || mount.Length < 1 || !char.IsLetter(mount[0])) return;
+
+        char letter = mount[0];
+        try
+        {
+            using var dev = SptiDevice.OpenDriveLetter(letter);
+
+            sb.AppendLine();
+            sb.AppendLine("--- Disc info (SCSI) ---");
+            try
+            {
+                var info = dev.ReadDiscInformation();
+                sb.AppendLine($"Disc Status:  {info.Status}{(info.IsPlayablyFinalized ? "  (will play in standalone players)" : "")}");
+                sb.AppendLine($"Last Session: {info.LastSessionState}");
+                sb.AppendLine($"Sessions:     {info.Sessions}");
+                sb.AppendLine($"Disc Type:    {info.DiscTypeName}");
+            }
+            catch (Exception ex)
+            {
+                sb.AppendLine($"(disc info unavailable: {ex.Message})");
+            }
+
+            try
+            {
+                var toc = dev.ReadToc();
+                sb.AppendLine();
+                var typeLabel = toc.HasAudio && toc.HasData ? "Mixed-mode (audio + data)"
+                              : toc.HasAudio                ? "Audio CD"
+                                                            : "Data disc";
+                sb.AppendLine($"Layout:  {typeLabel}, {toc.Tracks.Count} track{(toc.Tracks.Count == 1 ? "" : "s")}, " +
+                              $"{toc.TotalDuration:hh\\:mm\\:ss} total");
+                sb.AppendLine();
+                sb.AppendLine("  #  Type             Duration");
+                sb.AppendLine(" --  ---------------  --------");
+                foreach (var t in toc.Tracks)
+                {
+                    sb.AppendLine($" {t.Number,2}  {t.TypeLabel,-15}  {t.Duration:mm\\:ss}");
+                }
+            }
+            catch (Exception ex)
+            {
+                sb.AppendLine($"(TOC read failed: {ex.Message})");
+            }
+        }
+        catch (Exception ex)
+        {
+            sb.AppendLine();
+            sb.AppendLine($"(SCSI pass-through unavailable: {ex.Message})");
+        }
     }
 
     private static string FormatBytes(long bytes)

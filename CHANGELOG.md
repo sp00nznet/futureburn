@@ -4,6 +4,12 @@ All notable changes to futureburn will land here. Format roughly follows [Keep a
 
 ## [Unreleased]
 
+## [0.0.10] — 2026-05-06
+
+### Added
+- **CD Info GUI tile now reads real disc info via SPTI.** When you select a drive with a disc loaded, the details pane shows: disc finalization status, last session state, session count, disc type, layout (audio CD / data / mixed), and a full track listing with per-track type and duration. Same data the CLI's `cd-info` command surfaces, just clickable.
+- Failures degrade gracefully — if SCSI pass-through is unavailable for any reason, you still see the IMAPI-based info above it.
+
 ## [0.0.9] — 2026-05-06
 
 ### Added
