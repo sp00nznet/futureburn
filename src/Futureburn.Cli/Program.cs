@@ -243,9 +243,9 @@ static int BurnCommand(string[] args)
     bool keepTemp    = HasFlag(args, "--keep-temp");
     int? speedSps    = ParseSpeedFlag(args);
     string engine    = (FlagValue(args, "--engine") ?? "v2").ToLowerInvariant();
-    if (engine is not ("v1" or "v2"))
+    if (engine is not ("v1" or "v2" or "spti"))
     {
-        Console.Error.WriteLine($"Unknown engine '{engine}'. Use v2 (default) or v1.");
+        Console.Error.WriteLine($"Unknown engine '{engine}'. Use v2 (default), v1, or spti.");
         return 1;
     }
 
@@ -278,6 +278,10 @@ static int BurnCommand(string[] args)
     if (engine == "v1")
     {
         return BurnViaV1(drive, playlist, tempDir, dryRun, skipConfirm, keepTemp);
+    }
+    if (engine == "spti")
+    {
+        return BurnViaSpti(drive, playlist, tempDir, dryRun, skipConfirm, keepTemp);
     }
 
     AudioCdBurner.BurnPlan plan;
@@ -375,6 +379,101 @@ static int BurnCommand(string[] args)
     {
         Console.Error.WriteLine();
         Console.Error.WriteLine($"BURN FAILED: {ex.Message}");
+        return 1;
+    }
+    finally
+    {
+        TryCleanup(tempDir, keep: keepTemp);
+    }
+}
+
+static int BurnViaSpti(OpticalDrive drive, Playlist playlist, string tempDir,
+                       bool dryRun, bool skipConfirm, bool keepTemp)
+{
+    Futureburn.Core.Spti.SptiAudioCdBurner.SptiBurnPlan plan;
+    try
+    {
+        plan = Futureburn.Core.Spti.SptiAudioCdBurner.Plan(drive, playlist, tempDir);
+    }
+    catch (AudioCdBurner.BurnException ex)
+    {
+        Console.Error.WriteLine();
+        Console.Error.WriteLine($"PLAN FAILED (spti):");
+        Console.Error.WriteLine($"  {ex.Message}");
+        TryCleanup(tempDir, keep: false);
+        return 1;
+    }
+
+    int decodedCount = plan.Tracks.Count(t => t.RequiredDecode);
+
+    Console.WriteLine();
+    Console.WriteLine("--- BURN PLAN (SPTI) ---");
+    Console.WriteLine($"  Drive: {drive.PrimaryMount}  {drive.VendorId} {drive.ProductId}");
+    Console.WriteLine();
+    Console.WriteLine($"  Tracks ({plan.Tracks.Count}):");
+    foreach (var t in plan.Tracks)
+    {
+        var title = t.Title ?? Path.GetFileName(t.SourcePath);
+        var marker = t.RequiredDecode ? "*" : " ";
+        Console.WriteLine($"    {marker} {t.Index,2}. {title}  ({t.Duration:mm\\:ss})");
+    }
+    if (decodedCount > 0)
+        Console.WriteLine($"    (* = decoded to CD format in {tempDir})");
+    Console.WriteLine();
+    var trackTime = TimeSpan.FromSeconds(plan.TotalSectors / 75.0);
+    Console.WriteLine($"  Total time:    {trackTime:hh\\:mm\\:ss}  ({plan.TotalSectors:N0} sectors)");
+    Console.WriteLine($"  Mode:          TAO with standard 2-second gaps (Red Book audio)");
+    Console.WriteLine();
+
+    if (dryRun)
+    {
+        Console.WriteLine("DRY RUN COMPLETE (spti) — no actual burn performed.");
+        TryCleanup(tempDir, keep: keepTemp && decodedCount > 0);
+        return 0;
+    }
+
+    if (!skipConfirm)
+    {
+        Console.Write($"This will write to {drive.PrimaryMount} via raw SCSI. Continue? [y/N] ");
+        var answer = Console.ReadLine();
+        if (answer?.Trim().ToLowerInvariant() is not ("y" or "yes"))
+        {
+            Console.WriteLine("Aborted.");
+            TryCleanup(tempDir, keep: false);
+            return 0;
+        }
+    }
+
+    Console.WriteLine();
+    Console.WriteLine("Burning via SPTI. Don't unplug the drive or close this window.");
+    Console.WriteLine();
+
+    try
+    {
+        int lastTrack = -1;
+        Futureburn.Core.Spti.SptiAudioCdBurner.ExecuteBurn(
+            plan,
+            onTrackStart: (current, total) =>
+                Console.WriteLine($"  -> Track {current}/{total} ..."),
+            onProgress: (current, total, written, totalBytes) =>
+            {
+                if (current != lastTrack)
+                {
+                    lastTrack = current;
+                    return;
+                }
+                int pct = totalBytes > 0 ? (int)(written * 100 / totalBytes) : 0;
+                if (written == totalBytes || (pct % 25 == 0 && pct > 0))
+                    Console.WriteLine($"     {pct}% ({FormatBytes(written)} / {FormatBytes(totalBytes)})");
+            });
+        Console.WriteLine();
+        Console.WriteLine("BURN COMPLETE (SPTI). Disc finalized.");
+        return 0;
+    }
+    catch (AudioCdBurner.BurnException ex)
+    {
+        Console.Error.WriteLine();
+        Console.Error.WriteLine($"BURN FAILED (spti): {ex.Message}");
         return 1;
     }
     finally

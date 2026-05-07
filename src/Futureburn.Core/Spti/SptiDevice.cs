@@ -129,6 +129,172 @@ public sealed class SptiDevice : IDisposable
     }
 
     /// <summary>
+    /// MMC SET CD SPEED (0xBB). Speeds in KB/s. Pass 0xFFFF to mean "max".
+    /// Audio CD 1x is 176 KB/s (raw rate), so 16x ≈ 2,816 KB/s, 48x ≈ 8,448 KB/s.
+    /// </summary>
+    public void SetCdSpeed(int readSpeedKbps, int writeSpeedKbps)
+    {
+        var cdb = new byte[16];
+        cdb[0] = MmcOpcodes.SetCdSpeed;
+        cdb[2] = (byte)(readSpeedKbps  >> 8);
+        cdb[3] = (byte)(readSpeedKbps  & 0xFF);
+        cdb[4] = (byte)(writeSpeedKbps >> 8);
+        cdb[5] = (byte)(writeSpeedKbps & 0xFF);
+        SendScsi(cdb, cdbLength: 12, dataBuffer: null, dataIn: false);
+    }
+
+    /// <summary>
+    /// MMC MODE SELECT 10 (0x55) — write a SCSI mode page. We use this to
+    /// configure the CD Write Parameters Mode Page (0x05), which tells the drive
+    /// to do TAO writes of CD-DA audio sectors at 2352 bytes raw.
+    /// </summary>
+    public void ModeSelect10(byte[] parameterList)
+    {
+        var cdb = new byte[16];
+        cdb[0] = MmcOpcodes.ModeSelect10;
+        cdb[1] = 0x10;  // PF = 1 (page format), SP = 0 (don't save to flash)
+        cdb[7] = (byte)(parameterList.Length >> 8);
+        cdb[8] = (byte)(parameterList.Length & 0xFF);
+        SendScsi(cdb, cdbLength: 10, dataBuffer: parameterList, dataIn: false);
+    }
+
+    /// <summary>
+    /// Configure the drive for CD-DA TAO writing. After this call, WRITE 12
+    /// commands at the current writable address will go straight onto the disc
+    /// as raw 2352-byte audio sectors.
+    /// </summary>
+    public void ConfigureForAudioTao()
+    {
+        // Mode Parameter Header (8 bytes): all zeros for our purposes.
+        // Mode Page 0x05 (CD Write Parameters), 52-byte page (page header 2 + 50).
+        var p = new byte[8 + 52];
+
+        // Mode header — 8 bytes of zeros is fine for SELECT.
+        // (Drive ignores most of these on input.)
+
+        // Page 0x05 starts at offset 8.
+        int o = 8;
+        p[o + 0]  = 0x05;       // Page Code = 5 (CD Write Parameters)
+        p[o + 1]  = 0x32;       // Page Length = 50
+        p[o + 2]  = 0x01;       // WriteType = 1 (TAO), BUFE off, no test write, LS_V off
+        p[o + 3]  = 0xC0;       // Multisession = 11 (final session), FP=0, Copy=0, TrackMode=0 (Audio CD-DA)
+        p[o + 4]  = 0x00;       // DataBlockType = 0 (raw 2352-byte sectors for CD-DA)
+        p[o + 5]  = 0x00;       // LinkSize
+        p[o + 6]  = 0x20;       // Initiator App Code = 0x20 (writer app)
+        p[o + 7]  = 0x00;       // Session Format = 0 (CD-DA / CD-ROM)
+        // Bytes 8-9: PacketSize (we don't use packet writing)
+        // Bytes 10-11: Audio Pause Length = 150 sectors = 2 seconds (the standard Red Book gap).
+        p[o + 10] = 0x00;
+        p[o + 11] = 0x96;       // 150
+        // Bytes 12-50: MCN, ISRC, sub-header — leave zero (no media catalog or ISRC).
+
+        ModeSelect10(p);
+    }
+
+    /// <summary>
+    /// MMC WRITE 12 (0xAA). Writes <paramref name="numBlocks"/> sectors of
+    /// <paramref name="data"/> starting at LBA <paramref name="startLba"/>.
+    /// For CD-DA audio TAO, blocks are 2352 bytes each.
+    /// </summary>
+    public void Write12(int startLba, int numBlocks, byte[] data, int timeoutSec = 60)
+    {
+        var cdb = new byte[16];
+        cdb[0] = MmcOpcodes.Write12;
+        cdb[2] = (byte)((startLba >> 24) & 0xFF);
+        cdb[3] = (byte)((startLba >> 16) & 0xFF);
+        cdb[4] = (byte)((startLba >>  8) & 0xFF);
+        cdb[5] = (byte)( startLba        & 0xFF);
+        cdb[6] = (byte)((numBlocks >> 24) & 0xFF);
+        cdb[7] = (byte)((numBlocks >> 16) & 0xFF);
+        cdb[8] = (byte)((numBlocks >>  8) & 0xFF);
+        cdb[9] = (byte)( numBlocks        & 0xFF);
+        SendScsi(cdb, cdbLength: 12, data, dataIn: false, timeoutSec: timeoutSec);
+    }
+
+    /// <summary>
+    /// MMC SYNCHRONIZE CACHE (0x35). Tells the drive to flush any internally
+    /// buffered data to the disc. Call after each track's WRITE 12 loop to
+    /// ensure the data is committed before CLOSE TRACK.
+    /// </summary>
+    public void SynchronizeCache()
+    {
+        var cdb = new byte[16];
+        cdb[0] = MmcOpcodes.SynchronizeCache;
+        SendScsi(cdb, cdbLength: 10, dataBuffer: null, dataIn: false, timeoutSec: 120);
+    }
+
+    /// <summary>
+    /// MMC CLOSE TRACK / SESSION / DISC (0x5B). Function:
+    ///   1 = close the specified track
+    ///   2 = close the current session (finalizes the disc for the session)
+    ///   6 = close the entire disc (disc-at-once finalize)
+    /// </summary>
+    public void CloseTrackOrSession(byte function, int trackNumber, int timeoutSec = 240)
+    {
+        var cdb = new byte[16];
+        cdb[0] = MmcOpcodes.CloseTrackSession;
+        cdb[1] = 0x00;  // IMMED = 0 (block until done)
+        cdb[2] = function;
+        cdb[4] = (byte)((trackNumber >> 8) & 0xFF);
+        cdb[5] = (byte)( trackNumber       & 0xFF);
+        SendScsi(cdb, cdbLength: 10, dataBuffer: null, dataIn: false, timeoutSec: timeoutSec);
+    }
+
+    public sealed record TrackInformation(
+        int TrackNumber,
+        int SessionNumber,
+        bool IsAudioTrack,
+        int TrackStartLba,
+        int NextWritableLba,
+        int FreeBlocks,
+        int TrackSize,
+        bool ReservedTrack,
+        bool Damaged);
+
+    /// <summary>
+    /// MMC READ TRACK INFORMATION (0x52) — get state of a single track. We
+    /// pass `trackNumber = 0xFF` to mean "the invisible/incomplete track" which
+    /// for a blank disc is track 1's starting position.
+    /// </summary>
+    public TrackInformation ReadTrackInformation(int trackNumber)
+    {
+        var data = new byte[36];
+        var cdb = new byte[16];
+        cdb[0] = MmcOpcodes.ReadTrackInformation;
+        cdb[1] = 0x01;  // address/number type: 01 = LTN (Logical Track Number)
+        cdb[2] = (byte)((trackNumber >> 24) & 0xFF);
+        cdb[3] = (byte)((trackNumber >> 16) & 0xFF);
+        cdb[4] = (byte)((trackNumber >>  8) & 0xFF);
+        cdb[5] = (byte)( trackNumber        & 0xFF);
+        cdb[7] = (byte)(data.Length >> 8);
+        cdb[8] = (byte)(data.Length & 0xFF);
+        SendScsi(cdb, cdbLength: 10, data, dataIn: true);
+
+        int dataLen = (data[0] << 8) | data[1];
+        int trackNum = data[2];           // (lower 8 bits; full number includes byte 32)
+        int sessionNum = data[3];
+        int trackStart = (data[8] << 24) | (data[9] << 16) | (data[10] << 8) | data[11];
+        int nextWritable = (data[12] << 24) | (data[13] << 16) | (data[14] << 8) | data[15];
+        int freeBlocks = (data[16] << 24) | (data[17] << 16) | (data[18] << 8) | data[19];
+        int trackSize = (data[24] << 24) | (data[25] << 16) | (data[26] << 8) | data[27];
+        bool reserved = (data[6] & 0x80) != 0;
+        bool damaged  = (data[5] & 0x20) != 0;
+        // Track Mode = bits 3-0 of byte 5; if 0 = audio (CD-DA), if 4 = data
+        bool isAudio = (data[5] & 0x04) == 0;
+
+        return new TrackInformation(
+            TrackNumber:     trackNum,
+            SessionNumber:   sessionNum,
+            IsAudioTrack:    isAudio,
+            TrackStartLba:   trackStart,
+            NextWritableLba: nextWritable,
+            FreeBlocks:      freeBlocks,
+            TrackSize:       trackSize,
+            ReservedTrack:   reserved,
+            Damaged:         damaged);
+    }
+
+    /// <summary>
     /// MMC READ DISC INFORMATION (opcode 0x51) data type 0 — the authoritative
     /// answer to "is this disc finalized?". A disc that's `DiscStatus.Finalized`
     /// AND `SessionState.Complete` should play in any standalone CD player.
