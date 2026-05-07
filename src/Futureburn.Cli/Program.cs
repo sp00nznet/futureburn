@@ -58,7 +58,8 @@ static int PrintUsage()
     Console.WriteLine("           --force       overwrite a non-blank disc (CD-RW only)");
     Console.WriteLine("           --yes / -y    skip the y/N confirmation prompt");
     Console.WriteLine("           --keep-temp   keep decoded WAVs in the temp dir after we finish");
-    Console.WriteLine("           --engine v2|v1   pick the IMAPI engine (default v2; v1 for legacy drives)");
+    Console.WriteLine("           --engine v2|v1|spti   pick the burn engine (default v2)");
+    Console.WriteLine("           --gapless        DAO + cue-sheet burn for true gapless audio (spti only, experimental)");
     Console.WriteLine();
     Console.WriteLine("  futureburn imapi-v1-info              Diagnose whether IMAPI v1 works here");
     Console.WriteLine("  futureburn spti-info <drive>          SCSI INQUIRY via SPTI (proves the SPTI path works)");
@@ -324,6 +325,7 @@ static int BurnCommand(string[] args)
     bool force       = HasFlag(args, "--force");
     bool skipConfirm = HasFlag(args, "--yes") || HasFlag(args, "-y");
     bool keepTemp    = HasFlag(args, "--keep-temp");
+    bool gapless     = HasFlag(args, "--gapless");
     int? speedSps    = ParseSpeedFlag(args);
     string engine    = (FlagValue(args, "--engine") ?? "v2").ToLowerInvariant();
     if (engine is not ("v1" or "v2" or "spti"))
@@ -367,7 +369,12 @@ static int BurnCommand(string[] args)
         // For SPTI the --speed flag is "Nx" (audio CD 1x = 176 KB/s).
         // Re-derive the X value from the parsed sps (1x = 75 sps).
         int? cdSpeedX = speedSps is { } sps ? sps / 75 : null;
-        return BurnViaSpti(drive, playlist, tempDir, dryRun, skipConfirm, keepTemp, cdSpeedX);
+        return BurnViaSpti(drive, playlist, tempDir, dryRun, skipConfirm, keepTemp, cdSpeedX, gapless);
+    }
+    if (gapless && engine != "spti")
+    {
+        Console.Error.WriteLine("--gapless requires --engine spti (TAO modes always insert 2-second gaps).");
+        return 1;
     }
 
     AudioCdBurner.BurnPlan plan;
@@ -474,7 +481,7 @@ static int BurnCommand(string[] args)
 }
 
 static int BurnViaSpti(OpticalDrive drive, Playlist playlist, string tempDir,
-                       bool dryRun, bool skipConfirm, bool keepTemp, int? cdSpeedX)
+                       bool dryRun, bool skipConfirm, bool keepTemp, int? cdSpeedX, bool gapless)
 {
     Futureburn.Core.Spti.SptiAudioCdBurner.SptiBurnPlan plan;
     try
@@ -508,7 +515,7 @@ static int BurnViaSpti(OpticalDrive drive, Playlist playlist, string tempDir,
     Console.WriteLine();
     var trackTime = TimeSpan.FromSeconds(plan.TotalSectors / 75.0);
     Console.WriteLine($"  Total time:    {trackTime:hh\\:mm\\:ss}  ({plan.TotalSectors:N0} sectors)");
-    Console.WriteLine($"  Mode:          TAO with standard 2-second gaps (Red Book audio)");
+    Console.WriteLine($"  Mode:          {(gapless ? "DAO/SAO with cue sheet — GAPLESS (experimental, untested on hardware)" : "TAO with standard 2-second gaps (Red Book audio)")}");
     Console.WriteLine($"  Speed:         {(cdSpeedX is { } x ? x + "x" : "drive default (recommend --speed 4x or 8x for old USB writers)")}");
     Console.WriteLine();
 
@@ -541,6 +548,8 @@ static int BurnViaSpti(OpticalDrive drive, Playlist playlist, string tempDir,
         Futureburn.Core.Spti.SptiAudioCdBurner.ExecuteBurn(
             plan,
             requestedCdSpeedX: cdSpeedX,
+            gapless: gapless,
+            onLog: msg => Console.WriteLine(msg),
             onTrackStart: (current, total) =>
                 Console.WriteLine($"  -> Track {current}/{total} ..."),
             onProgress: (current, total, written, totalBytes) =>

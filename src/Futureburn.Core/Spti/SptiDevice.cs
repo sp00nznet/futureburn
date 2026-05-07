@@ -179,12 +179,20 @@ public sealed class SptiDevice : IDisposable
         SendScsi(cdb, cdbLength: 10, dataBuffer: parameterList, dataIn: false);
     }
 
+    public enum CdAudioWriteMode : byte { TrackAtOnce = 1, SessionAtOnce = 2 }
+
     /// <summary>
     /// Configure the drive for CD-DA TAO writing. After this call, WRITE 12
     /// commands at the current writable address will go straight onto the disc
     /// as raw 2352-byte audio sectors.
     /// </summary>
-    public void ConfigureForAudioTao()
+    public void ConfigureForAudioTao() => ConfigureForAudio(CdAudioWriteMode.TrackAtOnce);
+
+    /// <summary>
+    /// Configure the drive for CD-DA writing in the chosen mode. SessionAtOnce
+    /// is required for gapless burning via SEND CUE SHEET.
+    /// </summary>
+    public void ConfigureForAudio(CdAudioWriteMode mode)
     {
         // Mode Parameter Header (8 bytes): all zeros for our purposes.
         // Mode Page 0x05 (CD Write Parameters), 52-byte page (page header 2 + 50).
@@ -197,7 +205,7 @@ public sealed class SptiDevice : IDisposable
         int o = 8;
         p[o + 0]  = 0x05;       // Page Code = 5 (CD Write Parameters)
         p[o + 1]  = 0x32;       // Page Length = 50
-        p[o + 2]  = 0x41;       // BUFE (bit 6) + WriteType = 1 (TAO).
+        p[o + 2]  = (byte)(0x40 | (byte)mode);  // BUFE (bit 6) + WriteType (1=TAO, 2=SAO/DAO)
                                 // BUFE = Buffer Underrun-Free Enabled (BURN-Proof).
                                 // Without this, a momentary buffer underrun trashes
                                 // the disc with a medium ECC error mid-write. Every
@@ -215,6 +223,21 @@ public sealed class SptiDevice : IDisposable
         // Bytes 12-50: MCN, ISRC, sub-header — leave zero (no media catalog or ISRC).
 
         ModeSelect10(p);
+    }
+
+    /// <summary>
+    /// MMC SEND CUE SHEET (0x5D). Hands the drive the disc layout for SAO/DAO
+    /// burning. Must be called after MODE SELECT 10 with WriteType = SAO and
+    /// before the first WRITE 12.
+    /// </summary>
+    public void SendCueSheet(byte[] cueSheet)
+    {
+        var cdb = new byte[16];
+        cdb[0] = MmcOpcodes.SendCueSheet;
+        cdb[6] = (byte)((cueSheet.Length >> 16) & 0xFF);
+        cdb[7] = (byte)((cueSheet.Length >>  8) & 0xFF);
+        cdb[8] = (byte)( cueSheet.Length        & 0xFF);
+        SendScsi(cdb, cdbLength: 10, dataBuffer: cueSheet, dataIn: false, timeoutSec: 60);
     }
 
     /// <summary>

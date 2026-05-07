@@ -85,8 +85,10 @@ public static class SptiAudioCdBurner
 
     public static void ExecuteBurn(SptiBurnPlan plan,
                                    int? requestedCdSpeedX = null,
+                                   bool gapless = false,
                                    Action<int, int>? onTrackStart = null,
-                                   Action<int, int, long, long>? onProgress = null)
+                                   Action<int, int, long, long>? onProgress = null,
+                                   Action<string>? onLog = null)
     {
         var mount = plan.Drive.PrimaryMount
             ?? throw new AudioCdBurner.BurnException("Drive has no mount point — can't open via SPTI.");
@@ -119,12 +121,32 @@ public static class SptiAudioCdBurner
             }
         }
 
-        // 4. Set Write Parameters Mode Page for TAO + CD-DA + raw sectors.
-        try { dev.ConfigureForAudioTao(); }
+        // 4. Set Write Parameters Mode Page for the chosen write mode + CD-DA + raw sectors.
+        var writeMode = gapless ? SptiDevice.CdAudioWriteMode.SessionAtOnce
+                                : SptiDevice.CdAudioWriteMode.TrackAtOnce;
+        try { dev.ConfigureForAudio(writeMode); }
         catch (Exception ex)
         {
             throw new AudioCdBurner.BurnException(
-                $"MODE SELECT 10 failed: {ex.Message}", ex);
+                $"MODE SELECT 10 ({writeMode}) failed: {ex.Message}", ex);
+        }
+
+        // For gapless DAO: send the cue sheet describing the disc layout BEFORE
+        // any WRITE 12 calls. The drive uses it to know where each track begins.
+        if (gapless)
+        {
+            onLog?.Invoke("Building cue sheet for gapless DAO burn ...");
+            var cueTracks = plan.Tracks.Select(t => new SptiCueSheet.Track(t.Sectors)).ToArray();
+            var cueSheet  = SptiCueSheet.BuildAudioCd(cueTracks, gapless: true);
+            onLog?.Invoke(SptiCueSheet.Dump(cueSheet));
+            try { dev.SendCueSheet(cueSheet); }
+            catch (Exception ex)
+            {
+                throw new AudioCdBurner.BurnException(
+                    $"SEND CUE SHEET failed: {ex.Message}\n  " +
+                    "(Gapless DAO mode is experimental — the cue sheet bytes are above. " +
+                    "If the drive rejected them, the binary layout is probably wrong.)", ex);
+            }
         }
 
         // 5. Burn each track.
@@ -211,9 +233,15 @@ public static class SptiAudioCdBurner
             catch (Exception ex)
             { throw new AudioCdBurner.BurnException($"SYNCHRONIZE CACHE failed after track {trackNum}: {ex.Message}", ex); }
 
-            try { dev.CloseTrackOrSession(function: 1, trackNumber: trackNum); }
-            catch (Exception ex)
-            { throw new AudioCdBurner.BurnException($"CLOSE TRACK failed for track {trackNum}: {ex.Message}", ex); }
+            // In TAO mode each track is closed individually. In DAO/SAO mode
+            // the cue sheet defines all track boundaries up front, so we skip
+            // per-track CLOSE TRACK calls and just CLOSE SESSION at the end.
+            if (!gapless)
+            {
+                try { dev.CloseTrackOrSession(function: 1, trackNumber: trackNum); }
+                catch (Exception ex)
+                { throw new AudioCdBurner.BurnException($"CLOSE TRACK failed for track {trackNum}: {ex.Message}", ex); }
+            }
 
             trackNum++;
         }
