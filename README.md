@@ -1,102 +1,75 @@
 # futureburn
 
-The optical-disc burning software your 2003 self wishes you had right now.
+A free, modern, open-source CD/DVD burner for **Windows 11**. Both a command-line tool and a GUI. **MIT licensed. Free forever. No spyware, no installers, no bundled VPNs, no "free trial" nag screens, no telemetry, no accounts.**
 
-A passion project to build a friendly, modern CD/DVD burner for **Windows 11** — both a CLI you can pipe things into and a GUI for the "I just want to click *burn* and walk away" crowd.
+> The current state of CD/DVD burning software in 2026 is grim. The "free" tools mostly come bundled with junkware — sneaky toolbar installers, "registry cleaners," VPN trial offers, telemetry. The "premium" ones charge subscription fees for software that hasn't meaningfully changed since 2008. This shouldn't be a market. **Optical disc burning is a solved engineering problem.** The Windows APIs and SCSI MMC commands needed are documented and stable. So here's the deal: futureburn is MIT-licensed, the code lives on GitHub, anyone can build it, fork it, ship it, audit it. **If anyone tries to sell you this software, they're scamming you.** Walk away.
 
-> Yes, optical media is dying. No, we don't care. Some of us still have spindles.
+A passion project that grew teeth.
 
 ---
 
-## What we're building
+## What works today
 
-A two-front assault on the burning problem:
+- ✅ **Burning a real Red Book audio CD from raw SCSI MMC commands** — confirmed on a 2008-vintage USB writer that two of the three IMAPI paths refused to use. Verified the disc plays in third-party players.
+- ✅ Multi-format input: **WAV, MP3, M4A, AAC, WMA, FLAC** (anything Windows Media Foundation handles)
+- ✅ **M3U / M3U8** playlists, simple and extended (`#EXTM3U` + `#EXTINF:`)
+- ✅ Three burn engines: modern IMAPI v2, legacy IMAPI v1, and **raw SPTI/SCSI** (the path ImgBurn uses)
+- ✅ Full disc inspection: drive capabilities, supported profiles + feature pages, current media type, finalization status, complete TOC with per-track type and duration
+- ✅ A four-tile WPF GUI shell, **CD Info** tile is fully wired
+- ✅ `--dry-run`, `--speed Nx`, `--force`, `--yes`, `--keep-temp` flags
+- ✅ Salvage operation for partial burns (`finalize <drive>`)
 
-**The CLI** — for keyboard people.
+## What's coming
+
+- ⬜ Multi-track full-album burns (working through a track-2 OS timeout edge case on the test drive)
+- ⬜ Wire the actual burn flow into the **Burn Audio CD** GUI tile
+- ⬜ Data CD/DVD burning
+- ⬜ Video DVD burning
+- ⬜ True gapless DAO burning via SPTI cue sheets
+- ⬜ LightScribe support — yes, really. The white whale. HP killed it in 2013, the SDK is out there, we'll find it.
+- ⬜ Mac/Linux ports — long after Windows is rock solid
+
+---
+
+## Why this exists
+
+A non-trivial chunk of the working internet still has CD/DVD drives plugged in and is producing physical media — for cars without aux jacks, for archival, for art objects, for the principle. The software market that serves these people is hostile by default. CD-burning shareware in 2026 is what shareware was in 2002, except the bundled spyware is more sophisticated.
+
+**futureburn is an alternative**: open-source, no-strings, no-account-required, no-network-calls. The repo, the code, the binaries — all free. If you want to inspect every SCSI command we send to your drive, the code is right there. If you want to fork it and add a feature, please do. If you want to make money helping people burn discs, sell support contracts or USB writers, not the software.
+
+---
+
+## Engines
+
+CD writing on Windows has three layers, and not all of them work on every drive. futureburn supports all three so we can pick whatever the hardware likes:
+
+| Flag | Layer | Use when |
+|---|---|---|
+| `--engine v2` *(default)* | IMAPI 2 (the modern Windows COM API, `MsftDiscFormat2TrackAtOnce`) | Most modern drives. Just works. |
+| `--engine v1` | IMAPI 1 (legacy XP-era COM, `MsDiscMasterObj` + `IRedbookDiscMaster`) | When v2 returns "mode page not present" or fails for unclear reasons on an old drive. |
+| `--engine spti` | Raw SCSI Pass-Through (`IOCTL_SCSI_PASS_THROUGH_DIRECT` + MMC opcodes) | When both IMAPI versions are uncooperative. Same approach as ImgBurn. **This is the engine that successfully wrote our first real audio CD.** |
+
+Run the diagnostics to find out which one your drive likes:
+
 ```powershell
-futureburn thisismycd.csv
+futureburn drives -v          # full capability dump for every drive
+futureburn cd-info F          # finalization status + TOC for the disc in F:
+futureburn imapi-v1-info      # is IMAPI v1 functional on this PC?
+futureburn spti-info F        # does raw SCSI pass-through work on F:?
 ```
-Hand it a CSV of audio tracks, it burns the CD. That's the dream. Eventually it'll do data discs and DVDs too.
-
-**The GUI** — for everybody else.
-A normal Windows app with a menu bar and four big friendly tiles:
-
-| | |
-|---|---|
-| **Burn Audio CD** | **Burn Video DVD** |
-| **CD Info** | **Settings** |
-
-Click a tile, get a focused little sub-program. Audio = drop your MP3s in, drag to reorder, hit burn. Video = drop your MKV in, hit burn (no menus, no chapters, just the movie). CD Info = tell me what's on this disc. Settings = the boring but necessary stuff.
-
----
-
-## Roadmap
-
-We're going in order. No skipping.
-
-- [ ] **v0.1 — Burn one audio CD from the command line.** The "hello world" of optical media.
-- [ ] **v0.2 — The four-tile GUI shell.** No actual burning behind the tiles yet, just the frame.
-- [ ] **v0.3 — Audio CD GUI.** Drag, drop, reorder, burn.
-- [ ] **v0.4 — Data CD/DVD.** Files in, disc out.
-- [ ] **v0.5 — Video DVD.** MKV in, watchable-on-a-DVD-player disc out. This one's going to be a fight.
-- [ ] **v0.6 — CD Info tile.** Read disc, show contents, show track times, the works.
-- [ ] **v?.? — LightScribe.** The white whale. HP killed LightScribe in 2013. The SDK is out there, somewhere. We will find it. We will burn cat pictures onto disc labels.
-- [ ] **v∞ — Mac/Linux ports.** Long after Windows is solid. Maybe never. We'll see.
 
 ---
 
 ## Stack
 
 - **Language:** C# (.NET 8)
-- **GUI:** WPF (chosen over WinUI 3 for the better learning resources — there's a decade of Stack Overflow answers)
-- **Burning engine:** [IMAPI2](https://learn.microsoft.com/en-us/windows/win32/imapi/about-imapiv2) — Windows' built-in COM API for optical media. C# talks to COM without much fuss.
-- **Target OS:** Windows 11. Win10 will probably work but isn't a goal.
-
----
-
-## Status
-
-**v0.0.7 — three burn engines, IMAPI v1 working on legacy drives, SPTI scaffolded.** Some old optical drives (we hit it on an LG GE20LU10 / FE06) make IMAPI v2's `PrepareMedia` return a SCSI mode-page error on perfectly blank CD-Rs, even though the disc and drive are otherwise fine. We now have three burn paths:
-
-- **`--engine v2`** (default): the modern IMAPI 2 path via `MsftDiscFormat2TrackAtOnce`. Works on most drives.
-- **`--engine v1`**: the legacy IMAPI 1 path via `MsDiscMasterObj` + `IRedbookDiscMaster`. Works on at least one drive where v2 doesn't. Validated via `imapi-v1-info`.
-- **`--engine spti`**: scaffold only — opens the drive via SCSI Pass-Through, runs an INQUIRY (proven via `spti-info <drive>`). Full burn implementation is the next step if v1 ever doesn't cut it for someone.
-
-Two new diagnostics: `imapi-v1-info` (does v1 work on this machine?) and `spti-info <drive>` (does SCSI pass-through work?).
-
-**v0.0.6 — the burn pipeline.** The CLI's `burn` command:
-
-1. Validates the playlist (every track exists + is decodable)
-2. Decodes any non-CD-format tracks to a temp dir (skips files that are already 44.1k / 16-bit / stereo WAV — the common case for Spotify rips)
-3. Pre-checks the disc — friendly bail-out if the CD-R is already used (you'll see the helpful message instead of a SCSI mode page error)
-4. Queries the disc via `MsftDiscFormat2TrackAtOnce` — sectors free, existing tracks, supported write speeds
-5. Validates: speed is in the supported list, capacity holds the playlist, disc is blank (or `--force`)
-6. In `--dry-run`: prints the plan and exits
-7. In real burn: y/N confirmation (skip with `--yes`), then `PrepareMedia` → `AddAudioTrack` per track → `ReleaseMedia`
-
-Hand-rolled COM throughout — the chosen TAO properties (`NumberOfExistingTracks`, `TotalSectorsOnMedia`, `SupportedWriteSpeeds`) all live on `IDiscFormat2TrackAtOnce` directly, no inherited base members needed, so we still don't need typed `[ComImport]` interfaces. Streaming uses a custom `ManagedIStream` (.NET Stream → COM IStream adapter) and a `CdPaddedAudioStream` (strips WAV header, pads each track to a 2352-byte CD sector boundary as IMAPI demands).
-
-**Status of the actual burning:** the code builds clean and the dry-run path runs end-to-end through Plan(). Real-disc validation is pending — needs a fresh blank CD-R in the drive.
-
-The four-tile GUI from v0.0.4 still hasn't been wired to the burn flow — that's v0.0.8.
-
-```
-E:\futureburn
-├── Futureburn.sln
-├── Directory.Build.props
-├── CHANGELOG.md
-└── src/
-    ├── Futureburn.Core/
-    │   ├── Imapi/                  <- IMAPI2: drive enum, capabilities, disc inspection
-    │   └── Audio/
-    │       ├── CdFormat.cs         <- Red Book audio constants
-    │       ├── AudioDecoder.cs     <- decode + resample anything → CD-format WAV
-    │       └── Playlist.cs         <- M3U / M3U8 parser
-    ├── Futureburn.Cli/             <- `drives`, `disc`, `probe`, `decode`, `playlist`
-    └── Futureburn.Gui/             <- MainWindow + CdInfoWindow + PlaceholderWindow
-```
-
-**Up next:** v0.0.6 — actually burn the bytes. Wire up `MsftDiscFormat2RawCD` (or `MsftDiscFormat2TrackAtOnce`) and feed it the CD-format PCM stream. This is also when we declare a typed `[ComImport] IDiscFormat2` so we get authoritative blank/finalized status before pressing the big red button. After that, v0.0.7 = multi-track from an M3U, then v0.0.8 wires the same flow into the **Burn Audio CD** GUI tile, and v0.1.0 is polish + safety checks.
+- **GUI:** WPF
+- **Audio:** [NAudio](https://github.com/naudio/NAudio) (MIT) for decoding + resampling
+- **Burning:**
+  - IMAPI v2 + v1 via hand-rolled `[ComImport]` interfaces (no NuGet wrappers)
+  - SPTI via direct P/Invoke and SCSI MMC opcodes
+- **Target OS:** Windows 11 (Win10 likely works, not a goal)
+- **Third-party packages:** NAudio. That's it. No installer, no telemetry SDK, no analytics package.
 
 ---
 
@@ -106,47 +79,68 @@ E:\futureburn
 # Drives + capabilities
 dotnet run --project src/Futureburn.Cli -- drives
 dotnet run --project src/Futureburn.Cli -- drives -v
-dotnet run --project src/Futureburn.Cli -- disc F:
 
-# Audio
+# Disc inspection
+dotnet run --project src/Futureburn.Cli -- disc F:
+dotnet run --project src/Futureburn.Cli -- cd-info F
+
+# Audio probing / decoding
 dotnet run --project src/Futureburn.Cli -- probe song.mp3
 dotnet run --project src/Futureburn.Cli -- decode song.mp3 song-cd.wav
 dotnet run --project src/Futureburn.Cli -- playlist mix.m3u8
-```
 
-Sample `drives` output:
+# Burning
+dotnet run --project src/Futureburn.Cli -- burn mix.m3u8 F: --dry-run
+dotnet run --project src/Futureburn.Cli -- burn mix.m3u8 F: --engine spti --speed 16x
 
-```
-Found 2 optical drives:
+# Salvage a partially-burned disc
+dotnet run --project src/Futureburn.Cli -- finalize F
 
-  F:\  HL-DT-ST DVDRAM GE20LU10 (FE06)
-    Reads:  CD-ROM; DVD-ROM
-    Writes: CD-R, CD-RW; DVD-RAM, DVD-R Sequential, DVD-R DL Sequential, ...
-    Loaded: CD-R
-
-  G:\  Msft Virtual DVD-ROM (1.0)
-    Reads:  CD-ROM; DVD-ROM
-    Loaded: DVD-ROM
-```
-
-GUI:
-
-```powershell
+# GUI
 dotnet run --project src/Futureburn.Gui
 ```
 
-Opens the four-tile main window. Click **CD Info** for a live drive/disc browser. The other three tiles open "not done yet" placeholders that point at the roadmap.
+The GUI opens to a four-tile main window. **CD Info** is the live tile and shows real-time disc state, capabilities, and full TOC with track-by-track listings. The other three tiles are placeholders for now.
+
+---
+
+## Repository layout
+
+```
+futureburn/
+├── Futureburn.sln
+├── Directory.Build.props        # one place to bump version, set framework, etc.
+├── CHANGELOG.md
+├── LICENSE                       # MIT
+└── src/
+    ├── Futureburn.Core/
+    │   ├── Imapi/                # IMAPI v2 + v1 typed COM, drive enum, disc inspection
+    │   ├── Audio/                # NAudio wrappers, M3U parser, CdFormat constants
+    │   └── Spti/                 # SCSI Pass-Through: native interop, MMC opcodes, burn engine
+    ├── Futureburn.Cli/           # all the commands above
+    └── Futureburn.Gui/           # WPF — MainWindow + CdInfoWindow + PlaceholderWindow
+```
 
 ---
 
 ## Versioning
 
-One number, one place. Edit `<Version>` in `Directory.Build.props` and every project picks it up. The CLI reads it back at runtime via `AssemblyInformationalVersionAttribute`, so you can always ask the binary what it thinks it is.
+One number, one place — `<Version>` in `Directory.Build.props`. Every project picks it up. The CLI prints its version on every invocation; the GUI shows it in the title bar and About dialog.
 
-Each version's notes live in [CHANGELOG.md](./CHANGELOG.md).
+Per-version changelog entries live in [CHANGELOG.md](./CHANGELOG.md).
+
+---
+
+## Contributing
+
+Pull requests welcome. Issues welcome. If you have a quirky drive that doesn't work, open an issue with the output of `futureburn drives -v` and `futureburn imapi-v1-info` and we'll add a workaround.
+
+If you build a feature, please match the existing tone in code comments — explanatory where the *why* isn't obvious (especially for SCSI/COM/IMAPI quirks) and otherwise let the names speak.
 
 ---
 
 ## License
 
-This is a private learning project. No license, no warranty, no promises. Burns at your own risk.
+[MIT](./LICENSE). Free for everyone, forever. Use it, fork it, ship it, sell hardware bundled with it. Just don't sell *the software itself* and pretend it's not free — there are too many people doing that already.
+
+No warranty. No promises. Burns at your own risk.
