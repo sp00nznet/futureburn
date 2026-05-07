@@ -190,6 +190,34 @@ static int ProbeAudio(string[] args)
         Console.WriteLine($"  Duration: {info.Duration:mm\\:ss\\.ff}");
         Console.WriteLine($"  CD time:  {info.EstimatedCdSectors:N0} sectors ({info.EstimatedCdSectors / 75.0 / 60.0:0.00} min)");
         Console.WriteLine($"  CD-ready: {(info.IsCdFormat ? "yes — no resampling needed" : "no — will resample")}");
+
+        // Richer info via ffprobe when ffmpeg is installed.
+        try
+        {
+            var p = Futureburn.Core.Ffmpeg.FfprobeRunner.Probe(args[1]);
+            Console.WriteLine();
+            Console.WriteLine("  --- ffprobe ---");
+            Console.WriteLine($"  Container:  {p.Format.FormatLongName} ({p.Format.FormatName})");
+            if (p.Format.BitRate is { } br)
+                Console.WriteLine($"  Bitrate:    {br / 1000:N0} kbps overall");
+            if (p.Format.Size is { } sz)
+                Console.WriteLine($"  File size:  {FormatBytes(sz)}");
+            foreach (var s in p.Streams.Where(s => s.CodecType == "audio"))
+            {
+                Console.WriteLine($"  Stream {s.Index} (audio): {s.CodecLongName} ({s.CodecName})" +
+                                  (s.BitRate is { } sb ? $", {sb / 1000:N0} kbps" : ""));
+            }
+            foreach (var tag in p.Format.Tags.OrderBy(t => t.Key))
+                Console.WriteLine($"    tag: {tag.Key} = {tag.Value}");
+        }
+        catch (InvalidOperationException)
+        {
+            // ffprobe not installed — skip silently. The basic probe above is enough.
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"  (ffprobe details unavailable: {ex.Message})");
+        }
         return 0;
     }
     catch (Exception ex) { Console.Error.WriteLine($"probe failed: {ex.Message}"); return 1; }

@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.IO;
+using System.Text;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -34,6 +35,8 @@ public partial class BurnAudioCdWindow : Window
         TrackList.ItemsSource = _tracks;
         _tracks.CollectionChanged += (_, _) => UpdateTotals();
         Loaded += (_, _) => RefreshDrives();
+        // SpeedCombo affects the est-burn-time calculation in UpdateTotals.
+        SpeedCombo.SelectionChanged += (_, _) => UpdateTotals();
         UpdateTotals();
     }
 
@@ -112,6 +115,161 @@ public partial class BurnAudioCdWindow : Window
         }
     }
 
+    private (int added, int skipped) TryAddTracksFromFolder(string folder)
+    {
+        var supported = AudioDecoder.SupportedExtensions
+            .Select(e => e.ToLowerInvariant())
+            .ToHashSet();
+        int added = 0, skipped = 0;
+        foreach (var f in Directory.EnumerateFiles(folder, "*", SearchOption.TopDirectoryOnly)
+                                    .Where(f => supported.Contains(Path.GetExtension(f).ToLowerInvariant()))
+                                    .OrderBy(f => f, StringComparer.OrdinalIgnoreCase))
+        {
+            if (TryAddTrack(f)) added++;
+            else                skipped++;
+        }
+        return (added, skipped);
+    }
+
+    private (int added, int skipped) TryAddTracksFromPlaylist(string playlistPath)
+    {
+        try
+        {
+            var pl = PlaylistParser.Load(playlistPath);
+            int added = 0, skipped = 0;
+            foreach (var entry in pl.Entries)
+            {
+                if (File.Exists(entry.Path) && TryAddTrack(entry.Path)) added++;
+                else                                                     skipped++;
+            }
+            return (added, skipped);
+        }
+        catch
+        {
+            return (0, 1);
+        }
+    }
+
+    // ---- Drag-and-drop ----------------------------------------------------
+
+    private void Window_DragEnter(object sender, DragEventArgs e)
+    {
+        e.Effects = e.Data.GetDataPresent(DataFormats.FileDrop)
+            ? DragDropEffects.Copy
+            : DragDropEffects.None;
+        e.Handled = true;
+    }
+
+    private void Window_Drop(object sender, DragEventArgs e)
+    {
+        if (!e.Data.GetDataPresent(DataFormats.FileDrop)) return;
+        var paths = (string[])e.Data.GetData(DataFormats.FileDrop);
+
+        Mouse.OverrideCursor = Cursors.Wait;
+        try
+        {
+            int added = 0, skipped = 0;
+            foreach (var path in paths)
+            {
+                if (Directory.Exists(path))
+                {
+                    var (a, s) = TryAddTracksFromFolder(path);
+                    added += a; skipped += s;
+                }
+                else if (File.Exists(path))
+                {
+                    var ext = Path.GetExtension(path).ToLowerInvariant();
+                    if (ext is ".m3u" or ".m3u8")
+                    {
+                        var (a, s) = TryAddTracksFromPlaylist(path);
+                        added += a; skipped += s;
+                    }
+                    else if (AudioDecoder.IsSupported(path))
+                    {
+                        if (TryAddTrack(path)) added++; else skipped++;
+                    }
+                    else
+                    {
+                        skipped++;
+                    }
+                }
+            }
+            StatusText.Text = added == 0
+                ? $"Nothing added (dropped items had no recognizable audio)."
+                : $"Added {added} track{(added == 1 ? "" : "s")}" +
+                  (skipped > 0 ? $" ({skipped} skipped)" : "") + ".";
+        }
+        finally { Mouse.OverrideCursor = null; }
+    }
+
+    // ---- Add folder + load/save playlist ---------------------------------
+
+    private void AddFolder_Click(object sender, RoutedEventArgs e)
+    {
+        var dlg = new Microsoft.Win32.OpenFolderDialog
+        {
+            Title = "Choose a folder of audio files",
+        };
+        if (dlg.ShowDialog(this) != true) return;
+        Mouse.OverrideCursor = Cursors.Wait;
+        try
+        {
+            var (added, skipped) = TryAddTracksFromFolder(dlg.FolderName);
+            StatusText.Text = $"Added {added} track{(added == 1 ? "" : "s")} from folder" +
+                              (skipped > 0 ? $" ({skipped} skipped)" : "") + ".";
+        }
+        finally { Mouse.OverrideCursor = null; }
+    }
+
+    private void LoadPlaylist_Click(object sender, RoutedEventArgs e)
+    {
+        var dlg = new Microsoft.Win32.OpenFileDialog
+        {
+            Filter = "M3U / M3U8 playlists|*.m3u;*.m3u8|All files|*.*",
+            Title = "Load a playlist",
+        };
+        if (dlg.ShowDialog(this) != true) return;
+        Mouse.OverrideCursor = Cursors.Wait;
+        try
+        {
+            var (added, skipped) = TryAddTracksFromPlaylist(dlg.FileName);
+            StatusText.Text = added == 0
+                ? "Couldn't load any tracks from that playlist."
+                : $"Loaded {added} track{(added == 1 ? "" : "s")} from {Path.GetFileName(dlg.FileName)}" +
+                  (skipped > 0 ? $" ({skipped} skipped)" : "") + ".";
+        }
+        finally { Mouse.OverrideCursor = null; }
+    }
+
+    private void SaveM3U_Click(object sender, RoutedEventArgs e)
+    {
+        if (_tracks.Count == 0)
+        {
+            MessageBox.Show(this, "Add some tracks before saving.", "Save M3U8",
+                MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+        var dlg = new Microsoft.Win32.SaveFileDialog
+        {
+            Filter = "Extended M3U8|*.m3u8|All files|*.*",
+            DefaultExt = ".m3u8",
+            FileName = "playlist.m3u8",
+            Title = "Save current track list as M3U8",
+        };
+        if (dlg.ShowDialog(this) != true) return;
+
+        var sb = new StringBuilder();
+        sb.AppendLine("#EXTM3U");
+        foreach (var t in _tracks)
+        {
+            int seconds = (int)Math.Round(t.Duration.TotalSeconds);
+            sb.AppendLine($"#EXTINF:{seconds},{t.Title}");
+            sb.AppendLine(t.FullPath);
+        }
+        File.WriteAllText(dlg.FileName, sb.ToString());
+        StatusText.Text = $"Saved {_tracks.Count} tracks to {dlg.FileName}.";
+    }
+
     private void MoveUp_Click(object sender, RoutedEventArgs e)
     {
         var idx = TrackList.SelectedIndex;
@@ -149,8 +307,32 @@ public partial class BurnAudioCdWindow : Window
     {
         var total = TimeSpan.FromTicks(_tracks.Sum(t => t.Duration.Ticks));
         TotalText.Text = $"{_tracks.Count} track{(_tracks.Count == 1 ? "" : "s")}, " +
-                         $"{total:hh\\:mm\\:ss} total " +
-                         $"(disc limits: 74 / 80 min)";
+                         $"{total:hh\\:mm\\:ss} total";
+
+        // Capacity fit + estimated burn time at the currently-selected speed.
+        string fits;
+        if (_tracks.Count == 0)
+            fits = "(disc limits: 74 / 80 min)";
+        else if (total.TotalMinutes <= 74)
+            fits = "fits on a 74-min CD-R";
+        else if (total.TotalMinutes <= 80)
+            fits = "needs an 80-min CD-R (won't fit on 74-min)";
+        else
+            fits = $"⚠ exceeds standard CD-R capacity by {total.TotalMinutes - 80:0.0} min";
+
+        long totalSectors = _tracks.Sum(t => Core.Audio.CdFormat.SectorsForDuration(t.Duration));
+        string speedLabel = (SpeedCombo?.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "default";
+        string burn = "";
+        if (speedLabel.EndsWith("x") && int.TryParse(speedLabel.AsSpan(0, speedLabel.Length - 1), out int x) && x > 0)
+        {
+            // Audio CD writes at x * 75 sectors/sec.
+            double burnSec = totalSectors / (double)(x * 75);
+            // Add ~30 sec for finalization overhead.
+            burnSec += 30;
+            burn = $"  •  est. burn at {x}x: ~{TimeSpan.FromSeconds(burnSec):mm\\:ss}";
+        }
+
+        FitsText.Text = fits + burn;
     }
 
     private async void Burn_Click(object sender, RoutedEventArgs e)

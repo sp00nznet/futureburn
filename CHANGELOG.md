@@ -4,6 +4,24 @@ All notable changes to futureburn will land here. Format roughly follows [Keep a
 
 ## [Unreleased]
 
+## [0.0.19] — 2026-05-06
+
+### Added
+- **ffmpeg / ffprobe runtime integration.** `Futureburn.Core/Ffmpeg/{FfmpegRunner,FfprobeRunner}.cs`:
+  - `FfmpegRunner` shells out to ffmpeg.exe with arbitrary args, streams stderr line-by-line via callback. Foundation for transcoding pipelines (DVD-Video / VCD / DVD-Audio authoring will all sit on top of this).
+  - `FfprobeRunner` runs `ffprobe -print_format json -show_format -show_streams` and parses the JSON into typed `FormatInfo` + `StreamInfo` records. Handles audio + video streams, embedded tags, optional fields.
+  - `probe <file>` CLI command now augments the basic NAudio readout with container/codec/bitrate/tags from ffprobe when it's installed. Silently skipped when ffmpeg isn't there.
+- **`FfmpegLocator` extended for winget installs.** Now finds ffmpeg under `%LOCALAPPDATA%\Microsoft\WinGet\Packages\Gyan.FFmpeg*\ffmpeg-*\bin\ffmpeg.exe` (the path Gyan.FFmpeg uses) and the `Microsoft\WindowsApps\` shim location. Validated against a fresh `winget install Gyan.FFmpeg` install.
+- **Burn Audio CD GUI tile — major UX upgrade:**
+  - **Drag-and-drop** any combination of audio files, folders, or `.m3u/.m3u8` playlists onto the window. Files added directly. Folders scanned for supported audio. Playlists parsed with our existing `PlaylistParser`.
+  - **Add folder...** button (uses .NET 8's `OpenFolderDialog`).
+  - **Load M3U...** button + corresponding **Save M3U8...** button. The Save button writes an extended M3U8 with `#EXTINF` durations + titles you can hand back to `futureburn burn`.
+  - **Fits-on-disc indicator**: shows whether the current track total fits a 74-min CD-R, needs an 80-min CD-R, or exceeds standard capacity (with overage in minutes).
+  - **Estimated burn time** at the currently-selected speed, recomputed live when you change the Speed dropdown. Adds ~30 sec for finalization overhead.
+
+### Tests
+- 3 new `FfprobeParseTests` covering AAC/M4A audio streams, MKV with H.264 video + AC-3 audio, and missing-optional-fields handling. Total 83 tests.
+
 ## [0.0.18] — 2026-05-06
 
 ### Added — prep work for video-disc authoring (DVD-Video / VCD / DVD-Audio)

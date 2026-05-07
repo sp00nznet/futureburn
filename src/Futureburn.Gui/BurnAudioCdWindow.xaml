@@ -4,15 +4,21 @@
         Title="Burn Audio CD"
         Height="560" Width="780"
         MinHeight="400" MinWidth="600"
-        WindowStartupLocation="CenterOwner">
+        WindowStartupLocation="CenterOwner"
+        AllowDrop="True"
+        DragEnter="Window_DragEnter"
+        Drop="Window_Drop">
   <DockPanel>
 
     <ToolBar DockPanel.Dock="Top">
-      <Button Content="Add files..." Click="AddFiles_Click" Padding="10,4"/>
+      <Button Content="Add files..."     Click="AddFiles_Click"    Padding="10,4"/>
+      <Button Content="Add folder..."    Click="AddFolder_Click"   Padding="10,4"/>
+      <Button Content="Load M3U..."      Click="LoadPlaylist_Click" Padding="10,4"/>
       <Separator/>
       <Button x:Name="MoveUpBtn"   Content="Move up"   Click="MoveUp_Click"   Padding="10,4"/>
       <Button x:Name="MoveDownBtn" Content="Move down" Click="MoveDown_Click" Padding="10,4"/>
       <Button x:Name="RemoveBtn"   Content="Remove"    Click="Remove_Click"   Padding="10,4"/>
+      <Button Content="Save M3U8..."   Click="SaveM3U_Click"   Padding="10,4"/>
       <Separator/>
       <TextBlock Text="Drive:" VerticalAlignment="Center" Margin="6,0,4,0"/>
       <ComboBox x:Name="DriveCombo" Width="240"/>
@@ -67,9 +73,14 @@
           <ColumnDefinition Width="*"/>
           <ColumnDefinition Width="Auto"/>
         </Grid.ColumnDefinitions>
-        <TextBlock x:Name="TotalText"
-                   VerticalAlignment="Center"
-                   FontSize="13"/>
+        <StackPanel>
+          <TextBlock x:Name="TotalText"
+                     FontSize="13"/>
+          <TextBlock x:Name="FitsText"
+                     FontSize="11"
+                     Opacity="0.65"
+                     Margin="0,2,0,0"/>
+        </StackPanel>
         <Button x:Name="BurnBtn"
                 Grid.Column="1"
                 Content="Burn"

@@ -52,6 +52,33 @@ public static class FfmpegLocator
         var scoop = Environment.GetEnvironmentVariable("SCOOP");
         if (!string.IsNullOrEmpty(scoop))
             yield return Path.Combine(scoop, "shims", "ffmpeg.exe");
+
+        // winget Microsoft Store shim (added to PATH after shell restart;
+        // we still won't find it via "ffmpeg" until then, but the alias
+        // file is where new shells will pick it up).
+        if (!string.IsNullOrEmpty(lad))
+            yield return Path.Combine(lad, "Microsoft", "WindowsApps", "ffmpeg.exe");
+
+        // winget Gyan.FFmpeg full-build install. The actual exe is buried
+        // under a versioned subfolder (e.g. ffmpeg-8.1.1-full_build); enumerate.
+        if (!string.IsNullOrEmpty(lad))
+        {
+            var wingetRoot = Path.Combine(lad, "Microsoft", "WinGet", "Packages");
+            if (Directory.Exists(wingetRoot))
+            {
+                foreach (var pkgDir in SafeEnumerateDirs(wingetRoot, "Gyan.FFmpeg*"))
+                foreach (var buildDir in SafeEnumerateDirs(pkgDir, "ffmpeg-*"))
+                {
+                    yield return Path.Combine(buildDir, "bin", "ffmpeg.exe");
+                }
+            }
+        }
+    }
+
+    private static IEnumerable<string> SafeEnumerateDirs(string parent, string pattern)
+    {
+        try { return Directory.EnumerateDirectories(parent, pattern); }
+        catch { return Array.Empty<string>(); }
     }
 
     private static FfmpegInfo? TryRun(string pathOrName)
