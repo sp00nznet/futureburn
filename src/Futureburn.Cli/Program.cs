@@ -31,6 +31,8 @@ return args[0].ToLowerInvariant() switch
     "cd-lookup"                    => CdLookup(args),
     "ffmpeg"                       => FfmpegInfo(),
     "dvdauthor"                    => DvdauthorInfo(),
+    "dvda-author-info"             => DvdaAuthorInfo(),
+    "dvda-author"                  => DvdaAuthorCommand(args),
     "validate-folder"              => ValidateFolder(args),
     "vcd-author"                   => VcdAuthorCommand(args),
     "dvdv-author"                  => DvdVideoAuthorCommand(args),
@@ -82,6 +84,8 @@ static int PrintUsage()
     Console.WriteLine("  futureburn cd-lookup <drive>          Compute the disc ID and look it up on MusicBrainz");
     Console.WriteLine("  futureburn ffmpeg                     Detect ffmpeg (foundation for video disc authoring)");
     Console.WriteLine("  futureburn dvdauthor                  Detect dvdauthor (proper DVD-Video IFO authoring)");
+    Console.WriteLine("  futureburn dvda-author-info           Detect dvda-author (DVD-Audio authoring)");
+    Console.WriteLine("  futureburn dvda-author <playlist> <out>  Author a DVD-Audio folder from a playlist");
     Console.WriteLine("  futureburn validate-folder <folder>   Recognize DVD-Video / DVD-Audio / VCD / SVCD / BD folder structures");
     Console.WriteLine("  futureburn vcd-author <input> <out>   Author a Video CD folder from a video file (experimental)");
     Console.WriteLine("    flags: --pal (default NTSC), --label NAME, --profile 1|2|3");
@@ -1402,6 +1406,187 @@ static int VcdAuthorCommand(string[] args)
     return 0;
 }
 
+static int DvdaAuthorInfo()
+{
+    Console.WriteLine();
+    Console.WriteLine("Looking for dvda-author ...");
+    var info = Futureburn.Core.Tools.DvdaAuthorLocator.Locate();
+    if (info is null)
+    {
+        Console.WriteLine();
+        Console.WriteLine("  Not found.");
+        Console.WriteLine();
+        Console.WriteLine("  dvda-author is the canonical open-source DVD-Audio authoring tool.");
+        Console.WriteLine("  It's not on winget / chocolatey / scoop in 2026 — manual install:");
+        Console.WriteLine();
+        Console.WriteLine("    1. Download from https://sourceforge.net/projects/dvd-audio/");
+        Console.WriteLine("    2. Extract to C:\\dvda-author\\ (or anywhere) so dvda-author.exe");
+        Console.WriteLine("       lives at one of:");
+        Console.WriteLine("         C:\\dvda-author\\bin\\dvda-author.exe");
+        Console.WriteLine("         C:\\Program Files\\dvda-author\\bin\\dvda-author.exe");
+        Console.WriteLine("         (or just put dvda-author.exe on PATH)");
+        Console.WriteLine();
+        Console.WriteLine("  Reality check: DVD-Audio is a niche audiophile format from the");
+        Console.WriteLine("  early 2000s. The PS4 doesn't play DVD-Audio discs. You need a");
+        Console.WriteLine("  DVD-A-aware player (specific home theater units / older audiophile");
+        Console.WriteLine("  gear). For 'high-res music on a DVD the PS4 plays', use");
+        Console.WriteLine("  `burn-folder` with WAV/FLAC files instead — that produces a data");
+        Console.WriteLine("  DVD that PS4's media player reads natively.");
+        return 1;
+    }
+
+    Console.WriteLine();
+    Console.WriteLine($"  Path:    {info.Path}");
+    Console.WriteLine($"  Version: {info.VersionLine}");
+    Console.WriteLine();
+    Console.WriteLine("  dvda-author is available. `dvda-author <playlist> <out>` will use it.");
+    return 0;
+}
+
+static int DvdaAuthorCommand(string[] args)
+{
+    if (args.Length < 3)
+    {
+        Console.WriteLine();
+        Console.WriteLine("usage: futureburn dvda-author <playlist-or-folder> <output-folder> [--label NAME]");
+        Console.WriteLine();
+        Console.WriteLine("Author a DVD-Audio AUDIO_TS folder from a playlist or folder of audio files.");
+        Console.WriteLine("Each track is decoded to a CD-format LPCM WAV (44.1 kHz / 16-bit / stereo)");
+        Console.WriteLine("and handed to dvda-author, which writes the AOB / IFO / BUP files.");
+        Console.WriteLine();
+        Console.WriteLine("Requires dvda-author to be installed. Run `futureburn dvda-author-info`");
+        Console.WriteLine("for install instructions and a reality check on DVD-A playback.");
+        return 1;
+    }
+
+    var input     = args[1];
+    var outFolder = args[2];
+    var label     = FlagValue(args, "--label") ?? "DVD_AUDIO";
+
+    var dvda = Futureburn.Core.Tools.DvdaAuthorRunner.Locate();
+    if (dvda is null)
+    {
+        Console.Error.WriteLine();
+        Console.Error.WriteLine("dvda-author not found. Run `futureburn dvda-author-info` for install help.");
+        return 1;
+    }
+
+    // Build the list of input audio files. Accept either a playlist or a folder.
+    List<string> sourceTracks;
+    if (Directory.Exists(input))
+    {
+        var supportedExt = AudioDecoder.SupportedExtensions
+            .Select(e => e.ToLowerInvariant())
+            .ToHashSet();
+        sourceTracks = new DirectoryInfo(input)
+            .GetFiles()
+            .Where(f => supportedExt.Contains(f.Extension.ToLowerInvariant()))
+            .OrderBy(f => f.Name, StringComparer.OrdinalIgnoreCase)
+            .Select(f => f.FullName)
+            .ToList();
+    }
+    else if (File.Exists(input))
+    {
+        try
+        {
+            var pl = PlaylistParser.Load(input);
+            sourceTracks = pl.Entries.Select(e => e.Path).Where(File.Exists).ToList();
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Couldn't read playlist: {ex.Message}");
+            return 1;
+        }
+    }
+    else
+    {
+        Console.Error.WriteLine($"Input not found: {input}");
+        return 1;
+    }
+
+    if (sourceTracks.Count == 0)
+    {
+        Console.Error.WriteLine("No audio tracks found in the input.");
+        return 1;
+    }
+
+    Console.WriteLine();
+    Console.WriteLine($"  Input:        {input}");
+    Console.WriteLine($"  Tracks:       {sourceTracks.Count}");
+    Console.WriteLine($"  Output:       {outFolder}");
+    Console.WriteLine($"  Label:        {label}");
+    Console.WriteLine($"  dvda-author:  {dvda.VersionLine}");
+    Console.WriteLine();
+
+    // Decode each track to a CD-format LPCM WAV in a temp folder, since
+    // dvda-author wants WAV inputs at supported sample rates. Our existing
+    // AudioDecoder.DecodeToCdWav produces 44.1/16/2 PCM which dvda-author accepts.
+    var tempDir = Path.Combine(Path.GetTempPath(), $"futureburn-dvda-{Guid.NewGuid():N}");
+    Directory.CreateDirectory(tempDir);
+    var stagedWavs = new List<string>();
+
+    try
+    {
+        Console.WriteLine("Staging WAVs (decoding non-CD-format tracks if needed) ...");
+        int idx = 1;
+        foreach (var src in sourceTracks)
+        {
+            string staged;
+            var probe = AudioDecoder.Probe(src);
+            if (probe.IsCdFormat &&
+                Path.GetExtension(src).Equals(".wav", StringComparison.OrdinalIgnoreCase))
+            {
+                // Already CD-format WAV → use as-is.
+                staged = src;
+                Console.WriteLine($"  {idx,2}. {Path.GetFileName(src)}  (CD-ready)");
+            }
+            else
+            {
+                staged = Path.Combine(tempDir, $"track-{idx:00}.wav");
+                AudioDecoder.DecodeToCdWav(src, staged);
+                Console.WriteLine($"  {idx,2}. {Path.GetFileName(src)}  → decoded");
+            }
+            stagedWavs.Add(staged);
+            idx++;
+        }
+
+        Console.WriteLine();
+        Console.WriteLine("Authoring AUDIO_TS via dvda-author ...");
+        Directory.CreateDirectory(outFolder);
+        try
+        {
+            dvda.AuthorSingleGroup(stagedWavs, outFolder, line => Console.WriteLine($"  {line}"));
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine();
+            Console.Error.WriteLine($"dvda-author failed: {ex.Message}");
+            return 1;
+        }
+
+        Console.WriteLine();
+        Console.WriteLine("--- Authoring complete ---");
+        var audioTsDir = Path.Combine(outFolder, "AUDIO_TS");
+        if (Directory.Exists(audioTsDir))
+        {
+            foreach (var fi in new DirectoryInfo(audioTsDir).GetFiles().OrderBy(f => f.Name))
+                Console.WriteLine($"  AUDIO_TS\\{fi.Name,-16} {FormatBytes(fi.Length)}");
+        }
+        Console.WriteLine();
+        Console.WriteLine("To burn the resulting folder:");
+        Console.WriteLine($"  futureburn burn-folder \"{outFolder}\" F: --label \"{label}\"");
+        Console.WriteLine();
+        Console.WriteLine("Playback note: needs a DVD-A-aware player. Modern game consoles and");
+        Console.WriteLine("most computer DVD apps can't decode DVD-Audio — early-2000s premium");
+        Console.WriteLine("car audio systems and home-theater receivers are the typical targets.");
+        return 0;
+    }
+    finally
+    {
+        try { Directory.Delete(tempDir, recursive: true); } catch { }
+    }
+}
+
 static int DvdauthorInfo()
 {
     Console.WriteLine();
@@ -1608,12 +1793,30 @@ static int FinalizeDisc(string[] args)
         Console.WriteLine($"  Before: Status = {info.Status}, LastSession = {info.LastSessionState}");
 
         // Close the session. function = 2 = close current session.
-        // This blocks until the drive writes the lead-out (~30-60 sec typical).
-        Console.WriteLine("  CLOSE SESSION ... (this can take a minute)");
-        dev.CloseTrackOrSession(function: 2, trackNumber: 0, timeoutSec: 300);
+        // The drive may async-complete this even with IMMED=0 (verified on the
+        // GE20LU10), so issue with explicit IMMED=1 and poll READ DISC INFO
+        // until Status flips to Finalized — large multi-track sessions can
+        // take 1-2 minutes for the lead-out to actually be written.
+        Console.WriteLine("  CLOSE SESSION ... (this can take a few minutes for big multi-track discs)");
+        dev.CloseTrackOrSession(function: 2, trackNumber: 0, timeoutSec: 300, immediate: true);
 
-        var after = dev.ReadDiscInformation();
-        Console.WriteLine($"  After:  Status = {after.Status}, LastSession = {after.LastSessionState}");
+        var deadline = DateTime.UtcNow.AddSeconds(300);
+        var after = info;
+        int polls = 0;
+        while (DateTime.UtcNow < deadline)
+        {
+            polls++;
+            try
+            {
+                after = dev.ReadDiscInformation();
+                if (after.Status == Futureburn.Core.Spti.SptiDevice.DiscStatus.Finalized
+                    || after.LastSessionState == Futureburn.Core.Spti.SptiDevice.SessionState.Complete)
+                    break;
+            }
+            catch { }
+            Thread.Sleep(1000);
+        }
+        Console.WriteLine($"  After:  Status = {after.Status}, LastSession = {after.LastSessionState} (after {polls} poll(s))");
         if (after.IsPlayablyFinalized)
             Console.WriteLine("  Disc is finalized. Should play in standalone players.");
         else

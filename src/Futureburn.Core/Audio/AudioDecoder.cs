@@ -1,6 +1,7 @@
 using System.Runtime.Versioning;
 using NAudio.MediaFoundation;
 using NAudio.Wave;
+using Futureburn.Core.Ffmpeg;
 
 namespace Futureburn.Core.Audio;
 
@@ -43,18 +44,64 @@ public static class AudioDecoder
     /// Decode an audio file and write a CD-format WAV (44.1 kHz / 16-bit / stereo)
     /// to the destination path. If the input is already CD-format, we skip the
     /// resampler entirely.
+    /// Tries NAudio (Windows Media Foundation) first; falls back to ffmpeg
+    /// when NAudio either throws or produces a header-only WAV.
     /// </summary>
     public static void DecodeToCdWav(string inputPath, string outputPath)
     {
         EnsureFileExists(inputPath);
-        using var reader = OpenReader(inputPath);
 
+        Exception? naudioFailure = null;
+        try
+        {
+            DecodeWithNAudio(inputPath, outputPath);
+            // NAudio's MediaFoundationReader opens DASH-fragmented MP4s
+            // (e.g. Spotify-downloaded m4a files where ftyp brand is "dash")
+            // and reports correct duration, but Read() returns 0 immediately,
+            // leaving us with a 44–50 byte header-only WAV. Detect that and
+            // fall through to the ffmpeg fallback. 1 KB of CD-format audio
+            // is ~6 ms — anything legitimate will exceed that.
+            if (new FileInfo(outputPath).Length >= 1024) return;
+        }
+        catch (Exception ex)
+        {
+            naudioFailure = ex;
+        }
+
+        var ff = FfmpegRunner.Locate();
+        if (ff is null)
+        {
+            var detail = naudioFailure?.Message
+                         ?? "decoded to an empty WAV (likely a DASH-fragmented MP4 — common for Spotify m4a downloads)";
+            throw new InvalidOperationException(
+                $"Couldn't decode {Path.GetFileName(inputPath)}: {detail}. " +
+                "Install ffmpeg (winget install Gyan.FFmpeg) so we can fall back to it for stubborn inputs.");
+        }
+
+        if (File.Exists(outputPath)) File.Delete(outputPath);
+        var result = ff.Run(new[]
+        {
+            "-hide_banner", "-loglevel", "error", "-y",
+            "-i", inputPath,
+            "-vn",                                       // strip cover art / video tracks
+            "-ac", CdFormat.Channels.ToString(),
+            "-ar", CdFormat.SampleRate.ToString(),
+            "-sample_fmt", "s16",
+            outputPath,
+        });
+        if (result.ExitCode != 0 || !File.Exists(outputPath) || new FileInfo(outputPath).Length < 1024)
+            throw new InvalidOperationException(
+                $"ffmpeg fallback couldn't decode {Path.GetFileName(inputPath)}: {result.CombinedLog.Trim()}");
+    }
+
+    private static void DecodeWithNAudio(string inputPath, string outputPath)
+    {
+        using var reader = OpenReader(inputPath);
         if (IsAlreadyCdFormat(reader.WaveFormat))
         {
             WaveFileWriter.CreateWaveFile(outputPath, reader);
             return;
         }
-
         var target = new WaveFormat(CdFormat.SampleRate, CdFormat.BitsPerSample, CdFormat.Channels);
         using var resampler = new MediaFoundationResampler(reader, target) { ResamplerQuality = 60 };
         WaveFileWriter.CreateWaveFile(outputPath, resampler);

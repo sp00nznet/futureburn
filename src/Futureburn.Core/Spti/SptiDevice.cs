@@ -136,6 +136,85 @@ public sealed class SptiDevice : IDisposable
     public void EjectTray()  => StartStopUnit(start: false, loadEject: true);
     public void LoadTray()   => StartStopUnit(start: true,  loadEject: true);
 
+    /// <summary>
+    /// MMC TEST UNIT READY (0x00) — zero-byte command that asks the drive
+    /// to confirm it can accept commands. Returns success if ready;
+    /// throws an <see cref="SptiScsiException"/> with a meaningful sense
+    /// key otherwise (most commonly NOT_READY 0x2 or UNIT_ATTENTION 0x6).
+    /// </summary>
+    /// <summary>
+    /// MMC RESERVE TRACK (0x53). Pre-allocate space for the next track in
+    /// TAO multi-track recording. Tells the drive "the next WRITE 12 stream
+    /// will be exactly <paramref name="sizeInSectors"/> blocks long," so it
+    /// can set up its track-boundary state machine before any data arrives.
+    /// <para>
+    /// This is the missing ingredient we discovered after multiple
+    /// multi-track burn failures on the GE20LU10 — without RESERVE TRACK,
+    /// the drive accepts writes but never establishes a clean track-2
+    /// boundary, eventually raising UNIT ATTENTION mid-track. cdrecord and
+    /// every working CD writer issue this before each track.
+    /// </para>
+    /// </summary>
+    public void ReserveTrack(int sizeInSectors)
+    {
+        var cdb = new byte[16];
+        cdb[0] = 0x53;          // RESERVE TRACK opcode
+        cdb[1] = 0x00;          // ARSV=0, RMV=0 — fresh fixed-size reservation
+        cdb[5] = (byte)((sizeInSectors >> 24) & 0xFF);
+        cdb[6] = (byte)((sizeInSectors >> 16) & 0xFF);
+        cdb[7] = (byte)((sizeInSectors >>  8) & 0xFF);
+        cdb[8] = (byte)( sizeInSectors        & 0xFF);
+        SendScsi(cdb, cdbLength: 10, dataBuffer: null, dataIn: false, timeoutSec: 30);
+    }
+
+    public void TestUnitReady()
+    {
+        var cdb = new byte[16];   // opcode 0x00 + zeros
+        SendScsi(cdb, cdbLength: 6, dataBuffer: null, dataIn: false, timeoutSec: 10);
+    }
+
+    /// <summary>
+    /// Poll TEST UNIT READY until the drive becomes ready, absorbing the
+    /// transient sense conditions raised right after a state-changing
+    /// command (CLOSE TRACK, MODE SELECT, etc.):
+    ///   - 0x6 UNIT ATTENTION: a state change just happened. The TUR
+    ///     itself "consumes" the UA — the very next command should pass.
+    ///   - 0x2 NOT READY: drive is still doing internal work
+    ///     (writing the gap, finalizing track metadata). Wait briefly.
+    /// Anything else surfaces unchanged.
+    /// </summary>
+    public void WaitUntilReady(int timeoutSec = 60, Action<string>? onLog = null)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(timeoutSec);
+        int attempts = 0;
+        while (true)
+        {
+            attempts++;
+            try
+            {
+                TestUnitReady();
+                if (attempts > 1)
+                    onLog?.Invoke($"     drive ready after {attempts} TUR polls");
+                return;
+            }
+            catch (SptiScsiException ex) when (ex.SenseKey == 0x6)
+            {
+                // UNIT ATTENTION absorbed by this TUR. Loop immediately.
+                continue;
+            }
+            catch (SptiScsiException ex) when (ex.SenseKey == 0x2)
+            {
+                // NOT READY (drive still working). Brief wait, then retry.
+                if (DateTime.UtcNow > deadline)
+                    throw new InvalidOperationException(
+                        $"Drive still NOT READY after {timeoutSec}s polling " +
+                        $"(last sense: {ex.Message}).");
+                Thread.Sleep(200);
+                continue;
+            }
+        }
+    }
+
     private void StartStopUnit(bool start, bool loadEject)
     {
         var cdb = new byte[16];
@@ -284,8 +363,13 @@ public sealed class SptiDevice : IDisposable
     /// <paramref name="data"/> starting at LBA <paramref name="startLba"/>.
     /// For CD-DA audio TAO, blocks are 2352 bytes each.
     /// </summary>
-    public void Write12(int startLba, int numBlocks, byte[] data, int timeoutSec = 60)
+    public void Write12(int startLba, int numBlocks, byte[] data, int timeoutSec = 60, int? dataLength = null)
     {
+        // Per the SPTI doc, the kernel-visible byte count MUST agree with what
+        // the CDB describes (numBlocks × sectorSize). If the caller hands us a
+        // fixed-size scratch buffer larger than the actual transfer, they must
+        // also tell us the real byte count via dataLength — otherwise the
+        // mismatch will trigger STATUS_INVALID_PARAMETER or a USB-BOT reset.
         var cdb = new byte[16];
         cdb[0] = MmcOpcodes.Write12;
         cdb[2] = (byte)((startLba >> 24) & 0xFF);
@@ -296,7 +380,8 @@ public sealed class SptiDevice : IDisposable
         cdb[7] = (byte)((numBlocks >> 16) & 0xFF);
         cdb[8] = (byte)((numBlocks >>  8) & 0xFF);
         cdb[9] = (byte)( numBlocks        & 0xFF);
-        SendScsi(cdb, cdbLength: 12, data, dataIn: false, timeoutSec: timeoutSec);
+        SendScsi(cdb, cdbLength: 12, data, dataIn: false,
+                 timeoutSec: timeoutSec, dataLength: dataLength);
     }
 
     /// <summary>
@@ -316,12 +401,20 @@ public sealed class SptiDevice : IDisposable
     ///   1 = close the specified track
     ///   2 = close the current session (finalizes the disc for the session)
     ///   6 = close the entire disc (disc-at-once finalize)
+    /// <para>
+    /// On <paramref name="immediate"/>=true the drive returns as soon as the
+    /// command is accepted and finishes asynchronously. The caller must poll
+    /// <see cref="WaitUntilReady"/> + observable side effects (e.g. inter-track
+    /// gap appearing in NextWritableLba) before assuming completion. The LG
+    /// GE20LU10 silently treats IMMED=0 as IMMED=1 anyway, so the explicit
+    /// async pattern is more honest.
+    /// </para>
     /// </summary>
-    public void CloseTrackOrSession(byte function, int trackNumber, int timeoutSec = 240)
+    public void CloseTrackOrSession(byte function, int trackNumber, int timeoutSec = 240, bool immediate = false)
     {
         var cdb = new byte[16];
         cdb[0] = MmcOpcodes.CloseTrackSession;
-        cdb[1] = 0x00;  // IMMED = 0 (block until done)
+        cdb[1] = immediate ? (byte)0x01 : (byte)0x00;
         cdb[2] = function;
         cdb[4] = (byte)((trackNumber >> 8) & 0xFF);
         cdb[5] = (byte)( trackNumber       & 0xFF);
@@ -511,10 +604,26 @@ public sealed class SptiDevice : IDisposable
     /// <param name="dataBuffer">Buffer for DATA-IN reads or DATA-OUT writes (may be null/empty for unspecified).</param>
     /// <param name="dataIn">True = drive -> host, false = host -> drive (or unspecified if dataBuffer is empty).</param>
     /// <param name="timeoutSec">Command timeout in seconds.</param>
-    public void SendScsi(byte[] cdb, byte cdbLength, byte[]? dataBuffer, bool dataIn, int timeoutSec = 30)
+    /// <param name="dataLength">
+    /// Explicit transfer length in bytes. When null, defaults to dataBuffer.Length.
+    /// Set this when the buffer is larger than the actual transfer (e.g. a fixed-size
+    /// scratch buffer being used for a short read or write). Microsoft's SPTI doc
+    /// requires DataTransferLength to be the device-described byte count — passing
+    /// a too-large value can cause STATUS_INVALID_PARAMETER or, on USB-BOT optical
+    /// drives, a transport reset that surfaces as sense 0x6/0x29/0x00 on the next
+    /// command. Cf. cdrtools and libburn which keep CDB-blocks and data-bytes
+    /// locked together via a single buffer struct.
+    /// </param>
+    public void SendScsi(byte[] cdb, byte cdbLength, byte[]? dataBuffer, bool dataIn,
+                         int timeoutSec = 30, int? dataLength = null)
     {
         if (cdb.Length < cdbLength)
             throw new ArgumentException("CDB shorter than declared length");
+
+        int transferLen = dataLength ?? (dataBuffer?.Length ?? 0);
+        if (transferLen < 0 || (dataBuffer is not null && transferLen > dataBuffer.Length))
+            throw new ArgumentException(
+                $"dataLength {transferLen} can't be negative or exceed buffer length {dataBuffer?.Length ?? 0}");
 
         // SCSI_PASS_THROUGH_DIRECT_WITH_BUFFER allocation. We use sequential
         // layout structs and a pinned buffer for DataBuffer.
@@ -527,10 +636,10 @@ public sealed class SptiDevice : IDisposable
             Lun                = 0,
             CdbLength          = cdbLength,
             SenseInfoLength    = 32,
-            DataIn             = dataBuffer is null || dataBuffer.Length == 0
+            DataIn             = dataBuffer is null || transferLen == 0
                                    ? SptiNative.SCSI_IOCTL_DATA_UNSPECIFIED
                                    : (dataIn ? SptiNative.SCSI_IOCTL_DATA_IN : SptiNative.SCSI_IOCTL_DATA_OUT),
-            DataTransferLength = (uint)(dataBuffer?.Length ?? 0),
+            DataTransferLength = (uint)transferLen,
             TimeOutValue       = (uint)timeoutSec,
             DataBuffer         = IntPtr.Zero,    // set after pinning
             SenseInfoOffset    = 0,              // set below
@@ -584,9 +693,7 @@ public sealed class SptiDevice : IDisposable
                 byte senseKey = (byte)(wrapper.SenseBuf[2] & 0x0F);
                 byte asc      = wrapper.SenseBuf[12];
                 byte ascq     = wrapper.SenseBuf[13];
-                throw new InvalidOperationException(
-                    $"SCSI command 0x{cdb[0]:X2} returned status 0x{wrapper.Spt.ScsiStatus:X2} " +
-                    $"(sense key 0x{senseKey:X1}, ASC 0x{asc:X2}, ASCQ 0x{ascq:X2})");
+                throw new SptiScsiException(cdb[0], wrapper.Spt.ScsiStatus, senseKey, asc, ascq);
             }
         }
         finally
@@ -594,5 +701,32 @@ public sealed class SptiDevice : IDisposable
             if (dataHandle.IsAllocated) dataHandle.Free();
             Marshal.FreeHGlobal(wrapperPtr);
         }
+    }
+}
+
+/// <summary>
+/// Thrown by <see cref="SptiDevice.SendScsi"/> when a SCSI command returns
+/// a non-zero status. Carries the structured sense triple so callers can do
+/// typed retry decisions (e.g. retry on UNIT ATTENTION 0x6) instead of
+/// parsing the message string.
+/// </summary>
+[SupportedOSPlatform("windows")]
+public sealed class SptiScsiException : InvalidOperationException
+{
+    public byte Opcode     { get; }
+    public byte ScsiStatus { get; }
+    public byte SenseKey   { get; }
+    public byte Asc        { get; }
+    public byte Ascq       { get; }
+
+    public SptiScsiException(byte opcode, byte scsiStatus, byte senseKey, byte asc, byte ascq)
+        : base($"SCSI command 0x{opcode:X2} returned status 0x{scsiStatus:X2} " +
+               $"(sense key 0x{senseKey:X1}, ASC 0x{asc:X2}, ASCQ 0x{ascq:X2})")
+    {
+        Opcode     = opcode;
+        ScsiStatus = scsiStatus;
+        SenseKey   = senseKey;
+        Asc        = asc;
+        Ascq       = ascq;
     }
 }

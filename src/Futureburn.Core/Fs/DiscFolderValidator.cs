@@ -57,19 +57,23 @@ public static class DiscFolderValidator
         bool mpegav = dirNames.Contains("MPEGAV");
 
         // DVD-Video requires AUDIO_TS\ to exist (per spec) but it's empty.
-        // We only count it as "DVD-Audio content" if it actually has IFO/AOB files.
-        // Otherwise a pure DVD-Video disc looks like a hybrid which it isn't.
+        // DVD-Audio requires VIDEO_TS\ to exist (per spec) but it's empty.
+        // Either one only counts as "real content" if its folder has files;
+        // otherwise a pure DVD-Video gets misread as a hybrid (and vice
+        // versa for pure DVD-Audio).
         bool dvdAHasContent = dvdA && Directory.Exists(Path.Combine(folder, "AUDIO_TS"))
             && Directory.GetFiles(Path.Combine(folder, "AUDIO_TS")).Length > 0;
+        bool dvdVHasContent = dvdV && Directory.Exists(Path.Combine(folder, "VIDEO_TS"))
+            && Directory.GetFiles(Path.Combine(folder, "VIDEO_TS")).Length > 0;
 
         DiscType type;
-        if      (bdmv)                       type = DiscType.BluRayMovie;
-        else if (svcd)                       type = DiscType.SuperVideoCd;
-        else if (vcd)                        type = DiscType.VideoCd;
-        else if (dvdV && dvdAHasContent)     type = DiscType.DvdAudioVideoHybrid;
-        else if (dvdV)                       type = DiscType.DvdVideo;
-        else if (dvdAHasContent)             type = DiscType.DvdAudio;
-        else                                 type = entries.Length == 0 ? DiscType.Unknown : DiscType.DataDisc;
+        if      (bdmv)                                  type = DiscType.BluRayMovie;
+        else if (svcd)                                  type = DiscType.SuperVideoCd;
+        else if (vcd)                                   type = DiscType.VideoCd;
+        else if (dvdVHasContent && dvdAHasContent)      type = DiscType.DvdAudioVideoHybrid;
+        else if (dvdVHasContent)                        type = DiscType.DvdVideo;
+        else if (dvdAHasContent)                        type = DiscType.DvdAudio;
+        else                                            type = entries.Length == 0 ? DiscType.Unknown : DiscType.DataDisc;
 
         // Per-type structural checks.
         return type switch
@@ -117,8 +121,15 @@ public static class DiscFolderValidator
     private static Validation CheckDvdAudio(string folder)
     {
         var ts = Path.Combine(folder, "AUDIO_TS");
+        var vtsPath = Path.Combine(folder, "VIDEO_TS");
         var findings = new List<string>();
         var issues   = new List<string>();
+
+        // DVD-Audio spec requires VIDEO_TS\ to exist (even empty).
+        if (!Directory.Exists(vtsPath))
+            findings.Add("VIDEO_TS\\ folder not present — spec requires it (empty is fine).");
+        else
+            findings.Add("VIDEO_TS\\ folder present (empty is normal for pure DVD-Audio).");
 
         if (File.Exists(Path.Combine(ts, "AUDIO_TS.IFO"))) findings.Add("AUDIO_TS.IFO present (master info file).");
         else                                               issues  .Add("AUDIO_TS.IFO is missing.");

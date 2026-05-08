@@ -11,6 +11,7 @@ A passion project that grew teeth.
 ## What works today
 
 - ✅ **Burning a real Red Book audio CD from raw SCSI MMC commands** — confirmed on a 2008-vintage USB writer that two of the three IMAPI paths refused to use. Verified the disc plays in third-party players.
+- ✅ **Multi-track audio CD burning** — full 19-track / 1-hour album burn end-to-end via raw SPTI, verified playable in foobar2000 with random-track seeks. Took six CD-Rs of debugging to crack: the trailing-partial-chunk WRITE 12 was sending mismatched `DataTransferLength` vs CDB byte count, triggering USB-BOT recovery resets that surfaced as sense `0x29` UNIT ATTENTION mid-track-2. Fix: pad each track's final chunk to the chunk-size boundary with zero PCM (silence), exactly the way cdrtools and libburn do it. Adds <100 ms of inaudible silence at track ends.
 - ✅ Multi-format input: **WAV, MP3, M4A, AAC, WMA, FLAC** (anything Windows Media Foundation handles)
 - ✅ **M3U / M3U8** playlists, simple and extended (`#EXTM3U` + `#EXTINF:`)
 - ✅ Three burn engines: modern IMAPI v2, legacy IMAPI v1, and **raw SPTI/SCSI** (the path ImgBurn uses)
@@ -27,12 +28,13 @@ A passion project that grew teeth.
 - ✅ **ffprobe-enriched audio info** — when ffmpeg is installed, `probe <file>` now also shows container, codec, bitrate, file size, and embedded tags (creation date, encoder, etc.) on top of the basic NAudio readout.
 - ✅ **VCD authoring (experimental)** — `vcd-author <input> <out>` takes a video file, runs ffmpeg's `pal-vcd` / `ntsc-vcd` target preset to produce MPEG-1 + MP2 in MPEG-PS, and writes the binary `INFO.VCD` + `ENTRIES.VCD` files for the standard VCD folder structure. Software players (VLC, MPC-HC) play the result; strict standalone VCD players may reject it because we burn single-track data CDs (real VCDs are multi-track — separate future project).
 - ✅ **DVD-Video authoring** — `dvdv-author <input> <out>` runs ffmpeg's `ntsc-dvd` / `pal-dvd` preset, then automatically delegates IFO authoring to `dvdauthor` when it's installed (proper navigation tables → hardware-playable discs). Falls back to skeleton IFOs (VLC-only) when dvdauthor isn't on the system. Run `futureburn dvdauthor` to check / get install instructions.
+- ✅ **DVD-Audio authoring** — `dvda-author <playlist-or-folder> <out>` decodes each track to LPCM WAV (16/44.1) and delegates to the external `dvda-author` tool (Sourceforge), which produces real spec-compliant `AUDIO_TS\` IFO/BUP/AOB files. Run `futureburn dvda-author-info` to check install. Note: PS4 and most modern players can't read DVD-Audio — playback needs a DVD-A-aware player (some early-2000s premium car audio systems and home-theater receivers do support it).
 - ✅ **Audio CD GUI workflow polish** — drag-and-drop reorder of tracks, right-click / F2 / double-click to rename a track, ▶ Play / ■ Stop preview buttons backed by NAudio.
 - ✅ True gapless DAO via SPTI cue sheet (experimental — `--gapless` flag; first hardware test pending)
 
 ## What's coming
 
-- ⬜ Multi-track full-album burns (working through a track-2 OS timeout edge case on the test drive)
+- ⬜ Strict-Finalized status flag for multi-track burns (disc plays everywhere we've tested, but `READ DISC INFO` reports `Incomplete` — likely needs a different MMC close-function value or a follow-up CLOSE function 6/7 sequence; cosmetic, not blocking playback)
 - ⬜ MKV → DVD-Video pipeline (transcode + IFO/BUP/VOB authoring + UDF burn — a separate large subsystem)
 - ⬜ Blu-ray burning (when the test hardware arrives)
 - ⬜ LightScribe support — yes, really. The white whale. HP killed it in 2013, the SDK is out there, we'll find it.
