@@ -32,6 +32,8 @@ A passion project that grew teeth.
 - ✅ **Audio CD GUI workflow polish** — drag-and-drop reorder of tracks, right-click / F2 / double-click to rename a track, ▶ Play / ■ Stop preview buttons backed by NAudio.
 - ✅ True gapless DAO via SPTI cue sheet (experimental — `--gapless` flag; first hardware test pending)
 - ✅ **LightScribe label burning** — `lightscribe-info` enumerates LightScribe-capable drives; `lightscribe-print <drive> <image>` converts any PNG/JPG/BMP into a 24-bit center-fit BMP and submits it to the LSS Public SDK (`LSPrintAPI.dll`). First real label burn confirmed: Van Gogh's *Enclosed Wheat Field* etched onto a CD-R top in ~16 min at best quality on the GE20LU10. The white whale, done. (Currently uses LSS's user-driven dialog so you click "Print" in the LSS UI; full programmatic submission is held up on a boost::program_options drive-identifier mystery — to be revisited.)
+- ✅ **GUI tile for LightScribe** — drag in an image, pick a drive + quality, click Burn. Mirror image of the audio-CD tile workflow.
+- ✅ **One-shot labeled audio CD**: `futureburn burn mix.m3u8 F: --image cover.png` — does the audio side first, auto-ejects, walks you through flipping the disc (with a sanity check that you've actually flipped it), then LightScribes the label. The original goal-stack collapsed into one command.
 
 ## What's coming
 

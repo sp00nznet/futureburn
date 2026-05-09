@@ -32,10 +32,11 @@ public partial class MainWindow : Window
         w.Show();
     }
 
-    private void Settings_Click(object sender, RoutedEventArgs e) =>
-        OpenPlaceholder(
-            "Settings",
-            "Settings show up around v0.6. For now, the program decides everything for you.");
+    private void BurnLabel_Click(object sender, RoutedEventArgs e)
+    {
+        var w = new BurnLightScribeWindow { Owner = this };
+        w.Show();
+    }
 
     private void OpenPlaceholder(string title, string message)
     {

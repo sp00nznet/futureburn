@@ -669,10 +669,13 @@ static int BurnCommand(string[] args)
     if (args.Length < 3)
     {
         Console.WriteLine();
-        Console.WriteLine("usage: futureburn burn <playlist> <drive> [--dry-run] [--speed Nx] [--force] [--yes] [--keep-temp] [--engine v2|v1]");
+        Console.WriteLine("usage: futureburn burn <playlist> <drive> [--dry-run] [--speed Nx] [--force] [--yes] [--keep-temp] [--engine v2|v1] [--image PATH]");
         Console.WriteLine("  e.g. futureburn burn mix.m3u8 F: --dry-run");
         Console.WriteLine("       futureburn burn mix.m3u8 F: --speed 16x");
         Console.WriteLine("       futureburn burn mix.m3u8 F: --engine v1");
+        Console.WriteLine("       futureburn burn mix.m3u8 F: --image cover.png       # after audio burn, walks");
+        Console.WriteLine("                                                          # you through flipping the");
+        Console.WriteLine("                                                          # disc + LightScribes the label");
         return 1;
     }
 
@@ -685,6 +688,12 @@ static int BurnCommand(string[] args)
     bool gapless     = HasFlag(args, "--gapless");
     int? speedSps    = ParseSpeedFlag(args);
     string engine    = (FlagValue(args, "--engine") ?? "v2").ToLowerInvariant();
+    string? labelImage = FlagValue(args, "--image");
+    if (labelImage is not null && !File.Exists(labelImage))
+    {
+        Console.Error.WriteLine($"--image file not found: {labelImage}");
+        return 1;
+    }
     if (engine is not ("v1" or "v2" or "spti"))
     {
         Console.Error.WriteLine($"Unknown engine '{engine}'. Use v2 (default), v1, or spti.");
@@ -719,14 +728,18 @@ static int BurnCommand(string[] args)
 
     if (engine == "v1")
     {
-        return BurnViaV1(drive, playlist, tempDir, dryRun, skipConfirm, keepTemp);
+        int rc = BurnViaV1(drive, playlist, tempDir, dryRun, skipConfirm, keepTemp);
+        if (rc == 0 && !dryRun && labelImage is not null) return ChainLabelBurn(drive, labelImage);
+        return rc;
     }
     if (engine == "spti")
     {
         // For SPTI the --speed flag is "Nx" (audio CD 1x = 176 KB/s).
         // Re-derive the X value from the parsed sps (1x = 75 sps).
         int? cdSpeedX = speedSps is { } sps ? sps / 75 : null;
-        return BurnViaSpti(drive, playlist, tempDir, dryRun, skipConfirm, keepTemp, cdSpeedX, gapless);
+        int rc = BurnViaSpti(drive, playlist, tempDir, dryRun, skipConfirm, keepTemp, cdSpeedX, gapless);
+        if (rc == 0 && !dryRun && labelImage is not null) return ChainLabelBurn(drive, labelImage);
+        return rc;
     }
     if (gapless && engine != "spti")
     {
@@ -823,6 +836,7 @@ static int BurnCommand(string[] args)
         });
         Console.WriteLine();
         Console.WriteLine("BURN COMPLETE. Disc finalized.");
+        if (labelImage is not null) return ChainLabelBurn(drive, labelImage);
         return 0;
     }
     catch (AudioCdBurner.BurnException ex)
@@ -1408,6 +1422,166 @@ static int VcdAuthorCommand(string[] args)
     Console.WriteLine("  multi-track CDs may not. Multi-track CD-data writing is a separate");
     Console.WriteLine("  future project.");
     return 0;
+}
+
+// Used by the `burn ... --image PATH` flow: after the audio burn finishes
+// successfully, eject the disc, walk the user through flipping it, then
+// LightScribe the label image. Returns the burn-command's overall exit code.
+static int ChainLabelBurn(OpticalDrive drive, string imagePath)
+{
+    var letter = drive.PrimaryMount?.TrimEnd('\\', '/').TrimEnd(':');
+    if (string.IsNullOrEmpty(letter))
+    {
+        Console.Error.WriteLine();
+        Console.Error.WriteLine("Couldn't determine drive letter for label burn.");
+        return 1;
+    }
+
+    Console.WriteLine();
+    Console.WriteLine("─────────────────────────────────────────────────");
+    Console.WriteLine("  Audio side done. Now the LightScribe label.");
+    Console.WriteLine("─────────────────────────────────────────────────");
+    Console.WriteLine();
+
+    // Eject so the user can grab the disc and flip it.
+    try
+    {
+        using var dev = Futureburn.Core.Spti.SptiDevice.OpenDriveLetter(letter[0]);
+        dev.EjectTray();
+        Console.WriteLine($"  Ejected {letter}:.");
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"  (Couldn't auto-eject {letter}: {ex.Message}. Pull the disc manually.)");
+    }
+
+    Console.WriteLine();
+    Console.WriteLine("  → Take the disc out and FLIP IT.");
+    Console.WriteLine("    The shiny LightScribe coating (top side, where the logo is) now goes");
+    Console.WriteLine("    toward the laser — i.e. the side you'd normally read becomes face-up.");
+    Console.WriteLine();
+    Console.WriteLine("  → Re-insert the disc.");
+    Console.WriteLine();
+    Console.Write   ("  Press Enter when the disc is loaded label-side-down ... ");
+    Console.ReadLine();
+
+    // Quick sanity check: with the disc flipped, the data-side reader can't
+    // focus and READ DISC INFORMATION returns sense 0x5/0x30/0x00
+    // (INCOMPATIBLE MEDIUM INSTALLED). If we see a finalized data disc
+    // instead, the user probably re-inserted right-side-up by mistake.
+    try
+    {
+        using var dev = Futureburn.Core.Spti.SptiDevice.OpenDriveLetter(letter[0]);
+        Thread.Sleep(2000);  // give the drive a moment to spin up
+        try
+        {
+            var info = dev.ReadDiscInformation();
+            // If we got here, the data side is readable — disc is right-side-up.
+            Console.WriteLine();
+            Console.WriteLine($"  ⚠ Drive reads the disc as {info.Status}/{info.DiscTypeName} — looks like");
+            Console.WriteLine($"    you re-inserted it right-side-up (data-side toward laser). For a");
+            Console.WriteLine($"    label burn the LightScribe coating side needs to face the laser.");
+            Console.Write   ("    Flip it again, then press Enter (or type `skip` to label anyway): ");
+            var answer = Console.ReadLine();
+            if (!string.Equals(answer?.Trim(), "skip", StringComparison.OrdinalIgnoreCase))
+            {
+                // Re-eject to make the flip easy, then wait again.
+                try { dev.EjectTray(); } catch { }
+                Console.Write("    Press Enter when the disc is loaded label-side-down ... ");
+                Console.ReadLine();
+            }
+        }
+        catch (Futureburn.Core.Spti.SptiScsiException ex)
+            when (ex.SenseKey == 0x5 && ex.Asc == 0x30)
+        {
+            // Good — INCOMPATIBLE MEDIUM means the data side isn't accessible,
+            // which is exactly what we expect when the disc is flipped.
+            Console.WriteLine($"  ✓ Disc orientation looks right (data side not readable — flipped).");
+        }
+        catch (Exception)
+        {
+            // Any other error: trust the user and proceed.
+            Console.WriteLine($"  (Couldn't probe disc orientation; proceeding with the label burn.)");
+        }
+    }
+    catch (Exception)
+    {
+        // Even opening the device failed — just proceed.
+    }
+
+    // Hand off to the same code path as `lightscribe-print`.
+    Console.WriteLine();
+    Console.WriteLine("Submitting label print job — confirm in the LightScribe dialog when it appears.");
+    Console.WriteLine();
+
+    Futureburn.Core.LightScribe.LightScribeRunner runner;
+    try { runner = new Futureburn.Core.LightScribe.LightScribeRunner(); }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"LightScribe runtime not available: {ex.Message}");
+        return 1;
+    }
+
+    var driveIndex = runner.FindDriveIndex(letter);
+    if (driveIndex is null)
+    {
+        Console.Error.WriteLine($"No LightScribe drive at {letter}: — try `lightscribe-info`.");
+        return 1;
+    }
+
+    string preparedBmp = Futureburn.Core.LightScribe.LightScribeRunner.PrepareLabelImage(imagePath);
+    Console.WriteLine($"  Prepared 800x800 24-bit BMP from {Path.GetFileName(imagePath)}.");
+    Console.WriteLine();
+
+    try
+    {
+        Futureburn.Core.LightScribe.LSPrintStatusCode lastCode = default;
+        uint lastPct = uint.MaxValue;
+        var result = runner.PrintAndWait(
+            driveIndex.Value,
+            preparedBmp,
+            // We don't pass --quality; the LSS dialog lets the user pick it.
+            // (The current LSS build's launch_print_options_dialog rejects
+            // most options other than --filename — see project memory.)
+            quality: Futureburn.Core.LightScribe.LightScribeRunner.Quality.Best,
+            copies: 1,
+            showOperatorDialog: false,
+            pollIntervalMs: 1000,
+            onProgress: status =>
+            {
+                if (status.Code != lastCode || status.PercentComplete != lastPct)
+                {
+                    var time = string.IsNullOrEmpty(status.TimeRemainingText)
+                                ? $"{status.SecondsRemaining}s remaining"
+                                : status.TimeRemainingText;
+                    Console.WriteLine($"  [{status.Code}] {status.PercentComplete,3}%  {time}  {status.StatusText}");
+                    lastCode = status.Code;
+                    lastPct  = status.PercentComplete;
+                }
+            });
+
+        Console.WriteLine();
+        Console.WriteLine($"LABEL DONE — {result.Code}, {result.PercentComplete}%.");
+
+        // Eject when done so the labeled disc pops out for the user to admire.
+        try
+        {
+            using var dev = Futureburn.Core.Spti.SptiDevice.OpenDriveLetter(letter[0]);
+            dev.EjectTray();
+        }
+        catch { }
+        return 0;
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine();
+        Console.Error.WriteLine($"Label burn failed: {ex.Message}");
+        return 1;
+    }
+    finally
+    {
+        try { File.Delete(preparedBmp); } catch { }
+    }
 }
 
 static int LightScribeInfo()
