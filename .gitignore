@@ -64,3 +64,11 @@ Desktop.ini
 *.iso
 *.img
 test-discs/
+
+# Ad-hoc screenshots / test artifacts dropped in the repo root during sessions
+# (committed screenshots live in docs/screenshots/ instead)
+/*.png
+/*.jpg
+/*.jpeg
+/*.bmp
+!docs/screenshots/*

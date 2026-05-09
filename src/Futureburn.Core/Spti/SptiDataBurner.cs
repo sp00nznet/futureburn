@@ -144,6 +144,22 @@ public static class SptiDataBurner
                 $"MODE SELECT 10 ({(plan.IsDvd ? "DVD" : "CD")} data) failed: {ex.Message}", ex);
         }
 
+        // For DVD-R/+R Sequential, the drive *requires* RESERVE TRACK before
+        // any WRITE 12 — without it the first WRITE comes back with sense
+        // 0x5/0x2C/0x00 (COMMAND SEQUENCE ERROR). It pre-allocates the track
+        // size so the drive can set up its track-boundary state machine.
+        // CD-R rejects RESERVE TRACK as ILLEGAL REQUEST (it's a DVD-mode
+        // command), so we only call it for DVD media.
+        if (plan.IsDvd)
+        {
+            try { dev.ReserveTrack((int)plan.ImageSectors); }
+            catch (Exception ex)
+            {
+                throw new AudioCdBurner.BurnException(
+                    $"RESERVE TRACK ({plan.ImageSectors} sectors) for DVD failed: {ex.Message}", ex);
+            }
+        }
+
         // Write loop. 32-sector chunks = 64 KB per WRITE 12 — comfortable under
         // the SPTI 64 KB cap and the same ceiling we use for audio.
         const int chunkSectors = 32;
@@ -183,7 +199,12 @@ public static class SptiDataBurner
             {
                 try
                 {
-                    dev.Write12(currentLba, sectorsThisChunk, buffer);
+                    // Explicit dataLength so DataTransferLength always matches
+                    // what the CDB describes — same SPTI alignment requirement
+                    // we hit on audio CD partial chunks (sense 0x29 from
+                    // USB-BOT recovery if mismatched).
+                    dev.Write12(currentLba, sectorsThisChunk, buffer,
+                                dataLength: bytesThisChunk);
                     break;
                 }
                 catch (InvalidOperationException ex)
@@ -210,13 +231,64 @@ public static class SptiDataBurner
         catch (Exception ex)
         { throw new AudioCdBurner.BurnException($"SYNCHRONIZE CACHE failed: {ex.Message}", ex); }
 
-        try { dev.CloseTrackOrSession(function: 1, trackNumber: 1); }
+        // CLOSE TRACK with explicit IMMED=1: the GE20LU10 returns instantly
+        // either way, so the explicit-async pattern + observable poll is the
+        // honest contract. Without an active wait here, the immediately-
+        // following CLOSE SESSION sees the track as still incomplete and
+        // returns sense 0x5/0x72/0x03 (SESSION FIXATION ERROR — INCOMPLETE
+        // TRACK IN SESSION) — verified once on a DVD-R burn.
+        try { dev.CloseTrackOrSession(function: 1, trackNumber: 1, immediate: true); }
         catch (Exception ex)
         { throw new AudioCdBurner.BurnException($"CLOSE TRACK failed: {ex.Message}", ex); }
 
-        try { dev.CloseTrackOrSession(function: 2, trackNumber: 0); }
-        catch (Exception ex)
-        { throw new AudioCdBurner.BurnException($"CLOSE SESSION failed: {ex.Message}", ex); }
+        // Poll READ TRACK INFO of the just-closed track until TrackSize
+        // stabilizes — proof the close has actually committed (TUR is
+        // unreliable on this drive for state-change waits).
+        var closeDeadline = DateTime.UtcNow.AddSeconds(120);
+        int lastSize = -1;
+        int polls = 0;
+        while (DateTime.UtcNow < closeDeadline)
+        {
+            polls++;
+            try
+            {
+                var ti = dev.ReadTrackInformation(1);
+                if (ti.TrackSize > 0 && ti.TrackSize == lastSize) break;
+                lastSize = ti.TrackSize;
+            }
+            catch (SptiScsiException ex)
+                when (ex.SenseKey == 0x6 || ex.SenseKey == 0x2)
+            {
+                // Drive busy committing the close — retry.
+            }
+            Thread.Sleep(500);
+        }
+
+        // CLOSE SESSION with retry on the specific session-fixation sense
+        // code, which means the drive's track-close is still in flight even
+        // though our poll above thinks it's done. Up to 5 attempts with
+        // exponential backoff (covers ~30 seconds total).
+        int sessAttempt = 0;
+        while (true)
+        {
+            try
+            {
+                dev.CloseTrackOrSession(function: 2, trackNumber: 0, immediate: true);
+                break;
+            }
+            catch (SptiScsiException ex)
+                when (ex.SenseKey == 0x5 && ex.Asc == 0x72 && ex.Ascq == 0x03 && sessAttempt < 5)
+            {
+                sessAttempt++;
+                Thread.Sleep(2000 * sessAttempt);
+            }
+            catch (Exception ex)
+            {
+                throw new AudioCdBurner.BurnException(
+                    $"CLOSE SESSION failed (track-close polled stable after {polls} reads, " +
+                    $"session-close attempt {sessAttempt + 1}): {ex.Message}", ex);
+            }
+        }
     }
 
     private static int ReadFully(Stream s, byte[] buf, int count)

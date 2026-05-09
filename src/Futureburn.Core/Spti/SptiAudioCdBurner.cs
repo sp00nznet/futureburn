@@ -439,10 +439,23 @@ public static class SptiAudioCdBurner
         var toc  = dev.ReadToc();
 
         var mismatches = new List<string>();
-        if (info.Status != SptiDevice.DiscStatus.Finalized)
-            mismatches.Add($"Disc status is {info.Status}, expected Finalized.");
-        if (info.LastSessionState != SptiDevice.SessionState.Complete)
-            mismatches.Add($"Last session is {info.LastSessionState}, expected Complete.");
+        // Disc-status flag: only flag this when the TOC also looks broken.
+        // On the GE20LU10 (and likely others), a successful multi-track burn
+        // can leave the disc in `Status=Incomplete / LastSession=Empty` at
+        // the immediate post-burn drive-state read, even though the TOC,
+        // lead-out, and all tracks are present and the disc plays in real
+        // CD players (verified in user's car stereo). Treat the status flag
+        // as informational unless we ALSO see real structural problems
+        // (wrong track count, missing TOC).
+        bool statusLooksFinalized = info.Status == SptiDevice.DiscStatus.Finalized
+            || info.LastSessionState == SptiDevice.SessionState.Complete;
+        bool tocLooksGood = toc.Tracks.Count == plan.Tracks.Count;
+
+        if (!statusLooksFinalized && !tocLooksGood)
+        {
+            mismatches.Add($"Disc status is {info.Status}/{info.LastSessionState} " +
+                           $"AND track count is wrong — burn likely incomplete.");
+        }
         if (toc.Tracks.Count != plan.Tracks.Count)
             mismatches.Add($"Disc has {toc.Tracks.Count} tracks, plan expected {plan.Tracks.Count}.");
 

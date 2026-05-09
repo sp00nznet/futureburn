@@ -31,6 +31,7 @@ A passion project that grew teeth.
 - ✅ **DVD-Audio authoring** — `dvda-author <playlist-or-folder> <out>` decodes each track to LPCM WAV (16/44.1) and delegates to the external `dvda-author` tool (Sourceforge), which produces real spec-compliant `AUDIO_TS\` IFO/BUP/AOB files. Run `futureburn dvda-author-info` to check install. Note: PS4 and most modern players can't read DVD-Audio — playback needs a DVD-A-aware player (some early-2000s premium car audio systems and home-theater receivers do support it).
 - ✅ **Audio CD GUI workflow polish** — drag-and-drop reorder of tracks, right-click / F2 / double-click to rename a track, ▶ Play / ■ Stop preview buttons backed by NAudio.
 - ✅ True gapless DAO via SPTI cue sheet (experimental — `--gapless` flag; first hardware test pending)
+- ✅ **LightScribe label burning** — `lightscribe-info` enumerates LightScribe-capable drives; `lightscribe-print <drive> <image>` converts any PNG/JPG/BMP into a 24-bit center-fit BMP and submits it to the LSS Public SDK (`LSPrintAPI.dll`). First real label burn confirmed: Van Gogh's *Enclosed Wheat Field* etched onto a CD-R top in ~16 min at best quality on the GE20LU10. The white whale, done. (Currently uses LSS's user-driven dialog so you click "Print" in the LSS UI; full programmatic submission is held up on a boost::program_options drive-identifier mystery — to be revisited.)
 
 ## What's coming
 

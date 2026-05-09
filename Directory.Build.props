@@ -7,10 +7,10 @@
   -->
 
   <PropertyGroup>
-    <Version>0.0.35</Version>
-    <AssemblyVersion>0.0.35.0</AssemblyVersion>
-    <FileVersion>0.0.35.0</FileVersion>
-    <InformationalVersion>0.0.35</InformationalVersion>
+    <Version>0.0.39</Version>
+    <AssemblyVersion>0.0.39.0</AssemblyVersion>
+    <FileVersion>0.0.39.0</FileVersion>
+    <InformationalVersion>0.0.39</InformationalVersion>
     <!-- Don't auto-append +<git-sha> to the version string. Re-enable later for shipped builds. -->
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
   </PropertyGroup>
@@ -30,6 +30,14 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <LangVersion>latest</LangVersion>
     <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <!--
+      Note: the Cli and Gui executable projects override PlatformTarget=x86
+      individually. Required because LSPrintAPI.dll (LightScribe public SDK)
+      is 32-bit only and HP never shipped an x64 build, so a pure x64 host
+      can't LoadLibrary it. Library projects (Core, Tests) stay AnyCPU so
+      the test runner can keep using the x64 .NET runtime — P/Invoke is
+      lazy-resolved, the test binaries never touch LSPrintAPI.
+    -->
   </PropertyGroup>
 
 </Project>

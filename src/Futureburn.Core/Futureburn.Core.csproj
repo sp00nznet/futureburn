@@ -1,5 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <ItemGroup>
     <PackageReference Include="NAudio" Version="2.3.0" />
+    <!-- For LightScribe label-burn input prep: convert PNG/JPG → 24-bit BMP. -->
+    <PackageReference Include="System.Drawing.Common" Version="8.0.0" />
   </ItemGroup>
 </Project>

@@ -33,6 +33,8 @@ return args[0].ToLowerInvariant() switch
     "dvdauthor"                    => DvdauthorInfo(),
     "dvda-author-info"             => DvdaAuthorInfo(),
     "dvda-author"                  => DvdaAuthorCommand(args),
+    "lightscribe-info"             => LightScribeInfo(),
+    "lightscribe-print"            => LightScribePrint(args),
     "validate-folder"              => ValidateFolder(args),
     "vcd-author"                   => VcdAuthorCommand(args),
     "dvdv-author"                  => DvdVideoAuthorCommand(args),
@@ -86,6 +88,8 @@ static int PrintUsage()
     Console.WriteLine("  futureburn dvdauthor                  Detect dvdauthor (proper DVD-Video IFO authoring)");
     Console.WriteLine("  futureburn dvda-author-info           Detect dvda-author (DVD-Audio authoring)");
     Console.WriteLine("  futureburn dvda-author <playlist> <out>  Author a DVD-Audio folder from a playlist");
+    Console.WriteLine("  futureburn lightscribe-info           List LightScribe-capable drives + their status");
+    Console.WriteLine("  futureburn lightscribe-print <drive> <image>  Burn an image label onto a flipped LightScribe disc");
     Console.WriteLine("  futureburn validate-folder <folder>   Recognize DVD-Video / DVD-Audio / VCD / SVCD / BD folder structures");
     Console.WriteLine("  futureburn vcd-author <input> <out>   Author a Video CD folder from a video file (experimental)");
     Console.WriteLine("    flags: --pal (default NTSC), --label NAME, --profile 1|2|3");
@@ -1404,6 +1408,183 @@ static int VcdAuthorCommand(string[] args)
     Console.WriteLine("  multi-track CDs may not. Multi-track CD-data writing is a separate");
     Console.WriteLine("  future project.");
     return 0;
+}
+
+static int LightScribeInfo()
+{
+    Console.WriteLine();
+    Console.WriteLine("Looking for LightScribe drives ...");
+
+    Futureburn.Core.LightScribe.LightScribeRunner runner;
+    try
+    {
+        runner = new Futureburn.Core.LightScribe.LightScribeRunner();
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine();
+        Console.WriteLine($"  LightScribe runtime not available: {ex.Message}");
+        Console.WriteLine();
+        Console.WriteLine("  Install the LightScribe System Software (LSS) — the runtime");
+        Console.WriteLine("  is preserved on archive.org since HP killed the project in 2013:");
+        Console.WriteLine("    https://archive.org/details/lightscribesystemsoftwareversion1.18.11.1");
+        Console.WriteLine("  After install, the LightScribeService Windows service should start");
+        Console.WriteLine("  automatically and LSPrintAPI.dll should appear at:");
+        Console.WriteLine("    C:\\Program Files (x86)\\Common Files\\LightScribe\\LSPrintAPI.dll");
+        return 1;
+    }
+
+    if (!runner.AnyDrivePresent())
+    {
+        Console.WriteLine();
+        Console.WriteLine("  LSS is installed but reports no LightScribe-capable drives connected.");
+        Console.WriteLine("  Make sure the LightScribeService Windows service is running and that");
+        Console.WriteLine("  the drive's vendor/model identifies it as LightScribe-capable (the");
+        Console.WriteLine("  HL-DT-ST GE20LU10 is — the 'L' in the model = LightScribe).");
+        return 1;
+    }
+
+    var drives = runner.EnumerateDrives();
+    Console.WriteLine();
+    Console.WriteLine($"Found {drives.Count} LightScribe drive{(drives.Count == 1 ? "" : "s")}:");
+    foreach (var d in drives)
+    {
+        Console.WriteLine();
+        Console.WriteLine($"  Index:    {d.Index}");
+        Console.WriteLine($"  Path:     {d.DrivePath}");
+        Console.WriteLine($"  Name:     {d.DisplayName}");
+        Console.WriteLine($"  Status:   {d.Status}");
+    }
+    Console.WriteLine();
+    Console.WriteLine("To burn a label onto a LightScribe disc:");
+    Console.WriteLine($"  1. Burn the data side first via `futureburn burn` / `burn-folder`.");
+    Console.WriteLine($"  2. Eject the disc and FLIP IT (label side toward the laser).");
+    Console.WriteLine($"  3. Re-insert and run `futureburn lightscribe-print {drives[0].DrivePath} <image.png>`.");
+    return 0;
+}
+
+static int LightScribePrint(string[] args)
+{
+    if (args.Length < 3)
+    {
+        Console.WriteLine();
+        Console.WriteLine("usage: futureburn lightscribe-print <drive> <image> [--quality draft|normal|best] [--copies N]");
+        Console.WriteLine();
+        Console.WriteLine("Burn an image as a label onto a flipped LightScribe disc.");
+        Console.WriteLine();
+        Console.WriteLine("  <drive>     The LightScribe drive letter (e.g. F:).");
+        Console.WriteLine("  <image>     PNG / JPG / BMP / etc. — converted to 24-bit BMP automatically,");
+        Console.WriteLine("              centered on an 800x800 white canvas.");
+        Console.WriteLine("  --quality   draft (~3 min), normal (~10 min), best (~25 min). Default: best.");
+        Console.WriteLine("  --copies N  Repeat the same label N times (default 1).");
+        Console.WriteLine();
+        Console.WriteLine("Disc must be a LightScribe-coated disc (logo on top), already burned");
+        Console.WriteLine("and finalized on the data side, and inserted UPSIDE DOWN (label up means");
+        Console.WriteLine("label down on the laser side — flip from how you'd play it).");
+        return 1;
+    }
+
+    var driveLetter = args[1].TrimEnd('\\', '/');
+    if (!driveLetter.EndsWith(':')) driveLetter += ":";
+    var imagePath   = args[2];
+    if (!File.Exists(imagePath))
+    {
+        Console.Error.WriteLine($"Image not found: {imagePath}");
+        return 1;
+    }
+
+    var qualityArg  = (FlagValue(args, "--quality") ?? "best").ToLowerInvariant();
+    var quality = qualityArg switch
+    {
+        "draft"  => Futureburn.Core.LightScribe.LightScribeRunner.Quality.Draft,
+        "normal" => Futureburn.Core.LightScribe.LightScribeRunner.Quality.Normal,
+        "best"   => Futureburn.Core.LightScribe.LightScribeRunner.Quality.Best,
+        _ => throw new ArgumentException($"Unknown quality '{qualityArg}'. Use draft|normal|best."),
+    };
+    int copies = int.TryParse(FlagValue(args, "--copies"), out var c) ? c : 1;
+
+    Futureburn.Core.LightScribe.LightScribeRunner runner;
+    try { runner = new Futureburn.Core.LightScribe.LightScribeRunner(); }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"LightScribe runtime not available: {ex.Message}");
+        return 1;
+    }
+
+    var driveIndex = runner.FindDriveIndex(driveLetter);
+    if (driveIndex is null)
+    {
+        Console.Error.WriteLine($"No LightScribe drive at {driveLetter}.");
+        Console.Error.WriteLine("Run `futureburn lightscribe-info` to see available drives.");
+        return 1;
+    }
+
+    string preparedBmp;
+    if (Path.GetExtension(imagePath).Equals(".bmp", StringComparison.OrdinalIgnoreCase))
+    {
+        // User already gave us a BMP; trust it (if dimensions or depth are
+        // wrong the SDK will surface the error).
+        preparedBmp = imagePath;
+        Console.WriteLine($"Using BMP as-is: {imagePath}");
+    }
+    else
+    {
+        preparedBmp = Futureburn.Core.LightScribe.LightScribeRunner.PrepareLabelImage(imagePath);
+        Console.WriteLine($"Prepared 800x800 24-bit BMP from {Path.GetFileName(imagePath)}: {preparedBmp}");
+    }
+
+    Console.WriteLine();
+    Console.WriteLine($"  Drive:    {driveLetter} (LightScribe index {driveIndex})");
+    Console.WriteLine($"  Image:    {Path.GetFileName(imagePath)}");
+    Console.WriteLine($"  Quality:  {quality} ({(quality == Futureburn.Core.LightScribe.LightScribeRunner.Quality.Best ? "~25 min" : quality == Futureburn.Core.LightScribe.LightScribeRunner.Quality.Normal ? "~10 min" : "~3 min")})");
+    Console.WriteLine($"  Copies:   {copies}");
+    Console.WriteLine();
+    Console.WriteLine("Make sure the disc is FLIPPED (label coating toward the laser) and inserted.");
+    Console.WriteLine("Submitting label print job ...");
+    Console.WriteLine();
+
+    try
+    {
+        Futureburn.Core.LightScribe.LSPrintStatusCode lastCode = default;
+        uint lastPct = uint.MaxValue;
+        var result = runner.PrintAndWait(
+            driveIndex.Value,
+            preparedBmp,
+            quality,
+            copies,
+            showOperatorDialog: false,
+            pollIntervalMs: 1000,
+            onProgress: status =>
+            {
+                if (status.Code != lastCode || status.PercentComplete != lastPct)
+                {
+                    var time = string.IsNullOrEmpty(status.TimeRemainingText)
+                                ? $"{status.SecondsRemaining}s remaining"
+                                : status.TimeRemainingText;
+                    Console.WriteLine($"  [{status.Code}] {status.PercentComplete,3}%  {time}  {status.StatusText}");
+                    lastCode = status.Code;
+                    lastPct  = status.PercentComplete;
+                }
+            });
+
+        Console.WriteLine();
+        Console.WriteLine($"DONE — final state: {result.Code}, {result.PercentComplete}%.");
+        return 0;
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine();
+        Console.Error.WriteLine($"Label burn failed: {ex.Message}");
+        return 1;
+    }
+    finally
+    {
+        // Clean up the temp BMP if we made one.
+        if (preparedBmp != imagePath)
+        {
+            try { File.Delete(preparedBmp); } catch { }
+        }
+    }
 }
 
 static int DvdaAuthorInfo()
