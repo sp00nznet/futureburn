@@ -115,6 +115,46 @@ public class SptiCueSheetTests
     }
 
     [Fact]
+    public void BuildAudioCd_TrackNumbersAreBcdEncoded()
+    {
+        // Regression: we previously sent track numbers in binary (e.g. track 10
+        // as 0x0A) which has invalid BCD nibbles in the low half and made the
+        // drive reject SEND CUE SHEET with sense 0x5/0x26/0x00. Track numbers
+        // must be BCD: 1→0x01, 9→0x09, 10→0x10, 19→0x19, 99→0x99.
+        var tracks = Enumerable.Range(1, 19)
+            .Select(_ => new SptiCueSheet.Track(LengthSectors: 4500))
+            .ToArray();
+        var cue = SptiCueSheet.BuildAudioCd(tracks, gapless: true);
+
+        // First 3 descriptors are the A0/A1/A2 pointers. A1's PMIN field
+        // (byte 5) holds the last track number (BCD). For 19 tracks: 0x19.
+        Assert.Equal(0x19, cue[1 * 8 + 5]);
+
+        // Each per-track entry's TNO (byte 1) should be BCD. Layout after the
+        // 3 pointer descriptors: 2 entries per track. For track 10 (the
+        // first one that bites if we got binary wrong), the first entry's
+        // TNO byte is at descriptor index 3 + (10-1)*2 = 21.
+        int track10Idx0Offset = (3 + (10 - 1) * 2) * 8;
+        Assert.Equal(0x10, cue[track10Idx0Offset + 1]);
+
+        // And track 19's body entry: descriptor 3 + (19-1)*2 + 1 = 40.
+        int track19Idx1Offset = (3 + (19 - 1) * 2 + 1) * 8;
+        Assert.Equal(0x19, cue[track19Idx1Offset + 1]);
+    }
+
+    [Fact]
+    public void BuildAudioCd_A0FirstTrackIsBcd()
+    {
+        // Even though A0's first track is always 1 (which encodes to 0x01 in
+        // both binary and BCD), document the contract explicitly.
+        var cue = SptiCueSheet.BuildAudioCd(
+            new[] { new SptiCueSheet.Track(LengthSectors: 4500) },
+            gapless: true);
+        // A0 is descriptor 0, PMIN at byte 5.
+        Assert.Equal(0x01, cue[0 * 8 + 5]);
+    }
+
+    [Fact]
     public void BuildAudioCd_RejectsZeroTracks()
     {
         Assert.Throws<ArgumentException>(() =>

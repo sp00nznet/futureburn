@@ -37,10 +37,13 @@ A passion project that grew teeth.
 
 ## What's coming
 
+- 🚧 **CD-Text** (in progress) — embed artist + album + track titles into the lead-in so car stereos / standalone players display "George Strait — One Night At A Time" instead of "Track 1". Requires SAO/DAO mode; v0.0.41 fixed the BCD encoding bug in our cue sheet builder that was making the drive reject SEND CUE SHEET. Next step: encode CD-Text packs into the cue sheet stream.
 - ⬜ Strict-Finalized status flag for multi-track burns (disc plays everywhere we've tested, but `READ DISC INFO` reports `Incomplete` — likely needs a different MMC close-function value or a follow-up CLOSE function 6/7 sequence; cosmetic, not blocking playback)
+- ⬜ Headless LightScribe submission (works today through the LSS user dialog with one click; full programmatic submission is blocked on undocumented LSS internals — see the project memory for the dead-end map)
+- ⬜ MusicBrainz round-trip on burned discs (extend `cd-lookup` to recognize the discs we author ourselves)
+- ⬜ "What's loaded?" drive-enumeration UI tile
 - ⬜ MKV → DVD-Video pipeline (transcode + IFO/BUP/VOB authoring + UDF burn — a separate large subsystem)
 - ⬜ Blu-ray burning (when the test hardware arrives)
-- ⬜ LightScribe support — yes, really. The white whale. HP killed it in 2013, the SDK is out there, we'll find it.
 - ⬜ Mac/Linux ports — long after Windows is rock solid
 
 ---

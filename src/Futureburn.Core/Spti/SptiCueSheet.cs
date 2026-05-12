@@ -69,13 +69,18 @@ public static class SptiCueSheet
         var descriptors = new List<byte[]>(3 + tracks.Count * 2);
 
         // A0: first track number = 1, session format = 0 (CD-DA / CD-ROM).
-        // A0 special encoding: byte 5 = first track (binary, NOT BCD), byte 6 = session format.
+        // Track numbers in cue sheet entries are BCD-encoded (so they line up
+        // with what the drive writes into the subcode Q-channel verbatim).
+        // We previously sent them as binary, which broke for tracks 10+ — the
+        // drive's BCD parser saw invalid nibbles (e.g. binary 10 = 0x0A, where
+        // the low nibble 'A' is not a valid BCD digit) and rejected SEND CUE
+        // SHEET with sense 0x5/0x26/0x00 (INVALID FIELD IN PARAMETER LIST).
         descriptors.Add(MakeDescriptor(ctl: 0x01, tno: 0x00, index: 0xA0, dataForm: 0x00,
-                                        b5: 0x01, b6: 0x00, b7: 0x00));
+                                        b5: ToBcd(1), b6: 0x00, b7: 0x00));
 
-        // A1: last track number.
+        // A1: last track number (BCD).
         descriptors.Add(MakeDescriptor(ctl: 0x01, tno: 0x00, index: 0xA1, dataForm: 0x00,
-                                        b5: (byte)tracks.Count, b6: 0x00, b7: 0x00));
+                                        b5: ToBcd(tracks.Count), b6: 0x00, b7: 0x00));
 
         // A2: lead-out start position.
         var (loM, loS, loF) = LbaToMsfBcd(leadOutLba);
@@ -85,7 +90,7 @@ public static class SptiCueSheet
         // Per-track entries.
         for (int i = 0; i < tracks.Count; i++)
         {
-            byte tno = (byte)((i + 1) % 100);  // BCD-style would be different; cue sheet uses binary 01-99
+            byte tno = ToBcd(i + 1);   // BCD-encoded track number (01-99)
             var (m, s, f) = LbaToMsfBcd(startsLba[i]);
 
             // INDEX 0 (pre-gap entry). For track 1 it's at MSF 00:00:00 (lead-in handoff).
@@ -136,7 +141,7 @@ public static class SptiCueSheet
         return (ToBcd((int)minutes), ToBcd((int)seconds), ToBcd((int)frames));
     }
 
-    private static byte ToBcd(int n)
+    internal static byte ToBcd(int n)
     {
         // BCD: tens digit in upper nibble, units digit in lower nibble.
         if (n < 0 || n > 99) throw new ArgumentOutOfRangeException(nameof(n));

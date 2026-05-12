@@ -7,10 +7,10 @@
   -->
 
   <PropertyGroup>
-    <Version>0.0.40</Version>
-    <AssemblyVersion>0.0.40.0</AssemblyVersion>
-    <FileVersion>0.0.40.0</FileVersion>
-    <InformationalVersion>0.0.40</InformationalVersion>
+    <Version>0.0.41</Version>
+    <AssemblyVersion>0.0.41.0</AssemblyVersion>
+    <FileVersion>0.0.41.0</FileVersion>
+    <InformationalVersion>0.0.41</InformationalVersion>
     <!-- Don't auto-append +<git-sha> to the version string. Re-enable later for shipped builds. -->
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
   </PropertyGroup>
