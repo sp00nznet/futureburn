@@ -22,6 +22,7 @@ return args[0].ToLowerInvariant() switch
     "playlist"                     => ShowPlaylist(args),
     "mkplaylist"                   => MakePlaylist(args),
     "burn"                         => BurnCommand(args),
+    "cdtext-dump"                  => CdTextDump(args),
     "burn-iso"                     => BurnIsoCommand(args),
     "mkiso"                        => MkIsoCommand(args),
     "burn-folder"                  => BurnFolderCommand(args),
@@ -79,6 +80,11 @@ static int PrintUsage()
     Console.WriteLine("           --keep-temp   keep decoded WAVs in the temp dir after we finish");
     Console.WriteLine("           --engine v2|v1|spti   pick the burn engine (default v2)");
     Console.WriteLine("           --gapless        DAO + cue-sheet burn for true gapless audio (spti only, experimental)");
+    Console.WriteLine("           --cdtext         write artist/album/titles into the disc (spti only, implies --gapless, experimental)");
+    Console.WriteLine("           --album NAME     album title for --cdtext");
+    Console.WriteLine("           --artist NAME    album artist for --cdtext");
+    Console.WriteLine("  futureburn cdtext-dump <playlist>     Preview the CD-Text packs offline (no drive needed)");
+    Console.WriteLine("    flags: --album NAME, --artist NAME");
     Console.WriteLine();
     Console.WriteLine("  futureburn imapi-v1-info              Diagnose whether IMAPI v1 works here");
     Console.WriteLine("  futureburn spti-info <drive>          SCSI INQUIRY via SPTI (proves the SPTI path works)");
@@ -664,6 +670,54 @@ static int MakePlaylist(string[] args)
     return 0;
 }
 
+static int CdTextDump(string[] args)
+{
+    if (args.Length < 2)
+    {
+        Console.WriteLine();
+        Console.WriteLine("usage: futureburn cdtext-dump <playlist> [--album NAME] [--artist NAME]");
+        Console.WriteLine("  Builds the CD-Text packs offline and prints them — no drive or disc needed.");
+        Console.WriteLine("  Use it to eyeball exactly what `burn --cdtext` would write into a disc.");
+        return 1;
+    }
+
+    var playlistPath = args[1];
+    string? album  = FlagValue(args, "--album");
+    string? artist = FlagValue(args, "--artist");
+    if (!File.Exists(playlistPath))
+    {
+        Console.Error.WriteLine($"Playlist not found: {playlistPath}");
+        return 1;
+    }
+
+    Playlist playlist;
+    try { playlist = PlaylistParser.Load(playlistPath); }
+    catch (Exception ex) { Console.Error.WriteLine($"playlist load failed: {ex.Message}"); return 1; }
+    if (playlist.Entries.Count == 0) { Console.Error.WriteLine("Playlist is empty."); return 1; }
+
+    var tracks = playlist.Entries
+        .Select(e => new Futureburn.Core.Spti.SptiCdText.Track(e.Title, Performer: null))
+        .ToList();
+    var disc = new Futureburn.Core.Spti.SptiCdText.Disc(album, artist, tracks);
+    if (!disc.HasAnything)
+    {
+        Console.Error.WriteLine("Nothing to encode: no --album, no --artist, and the playlist " +
+                                "has no #EXTINF track titles.");
+        return 1;
+    }
+
+    byte[] packs;
+    try { packs = Futureburn.Core.Spti.SptiCdText.Build(disc); }
+    catch (Exception ex) { Console.Error.WriteLine($"CD-Text encoding failed: {ex.Message}"); return 1; }
+
+    Console.WriteLine();
+    Console.Write(Futureburn.Core.Spti.SptiCdText.Dump(packs));
+    Console.WriteLine();
+    Console.WriteLine($"{packs.Length} bytes, {Futureburn.Core.Spti.SptiCdText.PackCount(packs)} packs. " +
+                      "Compare against a reference tool before trusting a real burn.");
+    return 0;
+}
+
 static int BurnCommand(string[] args)
 {
     if (args.Length < 3)
@@ -686,6 +740,9 @@ static int BurnCommand(string[] args)
     bool skipConfirm = HasFlag(args, "--yes") || HasFlag(args, "-y");
     bool keepTemp    = HasFlag(args, "--keep-temp");
     bool gapless     = HasFlag(args, "--gapless");
+    bool cdText      = HasFlag(args, "--cdtext");
+    string? cdAlbum  = FlagValue(args, "--album");
+    string? cdArtist = FlagValue(args, "--artist");
     int? speedSps    = ParseSpeedFlag(args);
     string engine    = (FlagValue(args, "--engine") ?? "v2").ToLowerInvariant();
     string? labelImage = FlagValue(args, "--image");
@@ -698,6 +755,17 @@ static int BurnCommand(string[] args)
     {
         Console.Error.WriteLine($"Unknown engine '{engine}'. Use v2 (default), v1, or spti.");
         return 1;
+    }
+    if (cdText)
+    {
+        if (engine != "spti")
+        {
+            Console.Error.WriteLine("--cdtext requires --engine spti (CD-Text is written in the lead-in).");
+            return 1;
+        }
+        // CD-Text lives in the lead-in subchannel, which only SAO recording
+        // lets us populate — so --cdtext turns on the gapless/SAO path too.
+        gapless = true;
     }
 
     if (!File.Exists(playlistPath)) { Console.Error.WriteLine($"Playlist not found: {playlistPath}"); return 1; }
@@ -737,7 +805,8 @@ static int BurnCommand(string[] args)
         // For SPTI the --speed flag is "Nx" (audio CD 1x = 176 KB/s).
         // Re-derive the X value from the parsed sps (1x = 75 sps).
         int? cdSpeedX = speedSps is { } sps ? sps / 75 : null;
-        int rc = BurnViaSpti(drive, playlist, tempDir, dryRun, skipConfirm, keepTemp, cdSpeedX, gapless);
+        int rc = BurnViaSpti(drive, playlist, tempDir, dryRun, skipConfirm, keepTemp, cdSpeedX,
+                             gapless, cdText, cdAlbum, cdArtist);
         if (rc == 0 && !dryRun && labelImage is not null) return ChainLabelBurn(drive, labelImage);
         return rc;
     }
@@ -852,7 +921,8 @@ static int BurnCommand(string[] args)
 }
 
 static int BurnViaSpti(OpticalDrive drive, Playlist playlist, string tempDir,
-                       bool dryRun, bool skipConfirm, bool keepTemp, int? cdSpeedX, bool gapless)
+                       bool dryRun, bool skipConfirm, bool keepTemp, int? cdSpeedX, bool gapless,
+                       bool cdTextEnabled = false, string? cdAlbum = null, string? cdArtist = null)
 {
     Futureburn.Core.Spti.SptiAudioCdBurner.SptiBurnPlan plan;
     try
@@ -866,6 +936,26 @@ static int BurnViaSpti(OpticalDrive drive, Playlist playlist, string tempDir,
         Console.Error.WriteLine($"  {ex.Message}");
         TryCleanup(tempDir, keep: false);
         return 1;
+    }
+
+    // Build the CD-Text metadata from --album / --artist plus the per-track
+    // titles the playlist carried (M3U #EXTINF). Track artist is left null so
+    // every track inherits the album artist — the typical single-artist case.
+    Futureburn.Core.Spti.SptiCdText.Disc? cdTextDisc = null;
+    if (cdTextEnabled)
+    {
+        var cdTracks = plan.Tracks
+            .Select(t => new Futureburn.Core.Spti.SptiCdText.Track(t.Title, Performer: null))
+            .ToList();
+        cdTextDisc = new Futureburn.Core.Spti.SptiCdText.Disc(cdAlbum, cdArtist, cdTracks);
+        if (!cdTextDisc.HasAnything)
+        {
+            Console.Error.WriteLine();
+            Console.Error.WriteLine("--cdtext was requested but there's nothing to encode: no --album, " +
+                                    "no --artist, and the playlist has no #EXTINF track titles.");
+            TryCleanup(tempDir, keep: false);
+            return 1;
+        }
     }
 
     int decodedCount = plan.Tracks.Count(t => t.RequiredDecode);
@@ -888,6 +978,14 @@ static int BurnViaSpti(OpticalDrive drive, Playlist playlist, string tempDir,
     Console.WriteLine($"  Total time:    {trackTime:hh\\:mm\\:ss}  ({plan.TotalSectors:N0} sectors)");
     Console.WriteLine($"  Mode:          {(gapless ? "DAO/SAO with cue sheet — GAPLESS (experimental, untested on hardware)" : "TAO with standard 2-second gaps (Red Book audio)")}");
     Console.WriteLine($"  Speed:         {(cdSpeedX is { } x ? x + "x" : "drive default (recommend --speed 4x or 8x for old USB writers)")}");
+    if (cdTextDisc is not null)
+    {
+        Console.WriteLine($"  CD-Text:       ON (experimental, untested on hardware)");
+        Console.WriteLine($"                   album:  {cdTextDisc.AlbumTitle ?? "(none)"}");
+        Console.WriteLine($"                   artist: {cdTextDisc.AlbumPerformer ?? "(none)"}");
+        int titled = cdTextDisc.Tracks.Count(t => !string.IsNullOrWhiteSpace(t.Title));
+        Console.WriteLine($"                   {titled}/{cdTextDisc.Tracks.Count} tracks have titles");
+    }
     Console.WriteLine();
 
     if (dryRun)
@@ -920,6 +1018,7 @@ static int BurnViaSpti(OpticalDrive drive, Playlist playlist, string tempDir,
             plan,
             requestedCdSpeedX: cdSpeedX,
             gapless: gapless,
+            cdText: cdTextDisc,
             onLog: msg => Console.WriteLine(msg),
             onTrackStart: (current, total) =>
                 Console.WriteLine($"  -> Track {current}/{total} ..."),

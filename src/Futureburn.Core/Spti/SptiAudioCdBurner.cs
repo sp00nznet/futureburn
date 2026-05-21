@@ -87,6 +87,7 @@ public static class SptiAudioCdBurner
     public static void ExecuteBurn(SptiBurnPlan plan,
                                    int? requestedCdSpeedX = null,
                                    bool gapless = false,
+                                   SptiCdText.Disc? cdText = null,
                                    Action<int, int>? onTrackStart = null,
                                    Action<int, int, long, long>? onProgress = null,
                                    Action<string>? onLog = null)
@@ -94,6 +95,17 @@ public static class SptiAudioCdBurner
         var mount = plan.Drive.PrimaryMount
             ?? throw new AudioCdBurner.BurnException("Drive has no mount point — can't open via SPTI.");
         char letter = mount[0];
+
+        // CD-Text is carried in the lead-in subchannel, which only SAO/DAO
+        // recording lets the host populate. The CLI's --cdtext flag turns on
+        // gapless for us; this guards the API against being called wrong.
+        if (cdText is not null && !gapless)
+            throw new AudioCdBurner.BurnException(
+                "CD-Text requires SAO mode — call ExecuteBurn with gapless: true.");
+        if (cdText is not null && cdText.Tracks.Count != plan.Tracks.Count)
+            throw new AudioCdBurner.BurnException(
+                $"CD-Text describes {cdText.Tracks.Count} tracks but the burn plan has " +
+                $"{plan.Tracks.Count}.");
 
         using var dev = SptiDevice.OpenDriveLetter(letter);
 
@@ -138,7 +150,8 @@ public static class SptiAudioCdBurner
         {
             onLog?.Invoke("Building cue sheet for gapless DAO burn ...");
             var cueTracks = plan.Tracks.Select(t => new SptiCueSheet.Track(t.Sectors)).ToArray();
-            var cueSheet  = SptiCueSheet.BuildAudioCd(cueTracks, gapless: true);
+            var cueSheet  = SptiCueSheet.BuildAudioCd(cueTracks, gapless: true,
+                                                      cdText: cdText is not null);
             onLog?.Invoke(SptiCueSheet.Dump(cueSheet));
             try { dev.SendCueSheet(cueSheet); }
             catch (Exception ex)
@@ -148,6 +161,13 @@ public static class SptiAudioCdBurner
                     "(Gapless DAO mode is experimental — the cue sheet bytes are above. " +
                     "If the drive rejected them, the binary layout is probably wrong.)", ex);
             }
+
+            // CD-Text phase: write the metadata packs into the disc lead-in,
+            // immediately after the cue sheet and before any audio. The drive
+            // synthesizes the main-channel lead-in itself; we supply only the
+            // R-W subchannel CD-Text. See SptiCdText for the pack format.
+            if (cdText is not null)
+                WriteCdTextLeadIn(dev, cdText, onLog);
         }
 
         // 5. Burn each track.
@@ -413,6 +433,85 @@ public static class SptiAudioCdBurner
             onLog?.Invoke($"     {Stamp()} session closed — drive reports Status={finalInfo?.Status}/" +
                           $"LastSession={finalInfo?.LastSessionState} after {sessionPolls} polls (5 min timeout); " +
                           $"disc is playable but not strictly finalized. Total burn {burnClock.Elapsed.TotalSeconds:F1}s");
+    }
+
+    /// <summary>
+    /// Write the CD-Text packs into the disc lead-in. Called inside the SAO
+    /// burn, after SEND CUE SHEET and before the audio. The lead-in is filled
+    /// completely: its start address comes from the disc's ATIP, and the packs
+    /// are cycled to cover every 96-byte lead-in sector — the same approach
+    /// libburn's burn_write_leadin_cdtext() takes.
+    /// <para>
+    /// **STATUS:** experimental and not yet validated on real hardware. If the
+    /// drive rejects the negative-LBA 96-byte WRITE it surfaces as an SCSI
+    /// sense error here, before the audio program is touched.
+    /// </para>
+    /// </summary>
+    private static void WriteCdTextLeadIn(SptiDevice dev, SptiCdText.Disc cdText,
+                                          Action<string>? onLog)
+    {
+        onLog?.Invoke("CD-Text: encoding metadata packs ...");
+        byte[] packs = SptiCdText.Build(cdText);
+        onLog?.Invoke(SptiCdText.Dump(packs));
+
+        int leadInStart;
+        try { leadInStart = dev.ReadAtipLeadInStartLba(); }
+        catch (Exception ex)
+        {
+            throw new AudioCdBurner.BurnException(
+                $"Couldn't read the disc ATIP for the CD-Text lead-in address: {ex.Message}", ex);
+        }
+
+        // Lead-in runs from its (negative) start LBA up to LBA -150.
+        int leadInSectors = -150 - leadInStart;
+        if (leadInSectors <= 0 || leadInSectors > 60000)
+            throw new AudioCdBurner.BurnException(
+                $"ATIP reported an implausible lead-in start (LBA {leadInStart}); " +
+                "refusing to write CD-Text rather than risk the disc.");
+
+        onLog?.Invoke($"CD-Text: lead-in at LBA {leadInStart} — filling {leadInSectors} sectors " +
+                      $"with {SptiCdText.PackCount(packs)} packs");
+
+        byte[] image = SptiCdText.BuildLeadInImage(packs, leadInSectors);
+
+        // WRITE 10 the lead-in in batches. 96-byte blocks; 256 per WRITE keeps
+        // each transfer (~24 KB) well under the GE20LU10's ~64 KB SPTI ceiling.
+        const int batchSectors = 256;
+        int lba = leadInStart;
+        int sectorsLeft = leadInSectors;
+        int srcOffset = 0;
+        while (sectorsLeft > 0)
+        {
+            int n = Math.Min(batchSectors, sectorsLeft);
+            int bytes = n * SptiCdText.LeadInSectorBytes;
+            var batch = new byte[bytes];
+            Array.Copy(image, srcOffset, batch, 0, bytes);
+
+            int attempt = 0;
+            while (true)
+            {
+                try
+                {
+                    dev.WriteCdTextLeadIn(lba, n, batch);
+                    break;
+                }
+                // UNIT ATTENTION (0x6), or NOT READY with ASC 0x04 ("long write
+                // in progress") — both are transient flow control while the
+                // drive commits the lead-in. Brief wait, then retry.
+                catch (SptiScsiException ex)
+                    when ((ex.SenseKey == 0x6 || (ex.SenseKey == 0x2 && ex.Asc == 0x04))
+                          && attempt < 5)
+                {
+                    attempt++;
+                    Thread.Sleep(50 * attempt);
+                }
+            }
+
+            lba         += n;
+            sectorsLeft -= n;
+            srcOffset   += bytes;
+        }
+        onLog?.Invoke($"CD-Text: lead-in written ({leadInSectors} sectors).");
     }
 
     public sealed record VerificationResult(

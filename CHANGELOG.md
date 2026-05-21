@@ -4,6 +4,22 @@ All notable changes to futureburn will land here. Format roughly follows [Keep a
 
 ## [Unreleased]
 
+## [0.0.42] — 2026-05-21
+
+### Added — CD-Text writing
+Encode artist + album + per-track titles into the disc lead-in so car stereos and standalone players show "Whatever You Want" instead of "Track 16".
+- `Futureburn.Core/Spti/SptiCdText.cs` — the CD-Text pack encoder. Builds the 18-byte packs (4-byte header + 12-byte text + CRC-16), splits the per-track text streams into 12-byte payloads with correct track-number and character-position fields, and emits the mandatory three `0x8F` size-info packs. CRC-16 is the CCITT variant (poly 0x1021, init 0x0000, complemented, big-endian) verified against a cataloged known-answer. Also does the 18→24-byte 6-bit subchannel expansion and builds the full lead-in image (packs cycled to fill every 96-byte lead-in sector) — both matching libburn's `burn_write_leadin_cdtext()`.
+- `SptiCueSheet.BuildAudioCd` gained a `cdText` flag — when set, the A0/A1/A2 lead-in pointer entries carry DATA FORM `0x41` (the `0x40` bit tells the drive CD-Text is coming).
+- `SptiDevice` — `ReadAtipLeadInStartLba()` (READ TOC/PMA/ATIP format 0100b → the negative lead-in start LBA) and `WriteCdTextLeadIn()` (WRITE 10 of 96-byte blocks to negative lead-in LBAs).
+- `SptiAudioCdBurner.ExecuteBurn` — a CD-Text lead-in write phase, inserted after SEND CUE SHEET and before the audio, using the libburn-style cooked-SAO approach (no DataBlockType switching; the audio phase is byte-for-byte unchanged).
+- CLI: `burn ... --engine spti --cdtext --album NAME --artist NAME` (auto-enables `--gapless`; track titles come from the playlist's `#EXTINF` lines). New `cdtext-dump <playlist>` command prints the encoded packs **offline** — no drive, no disc — for verification before a real burn.
+
+### Tests
+- 23 new tests (`SptiCdTextTests` + 2 in `SptiCueSheetTests`): CRC known-answer, the byte-level worked example, `0x8F` pack-count correctness, 6-bit expansion against libburn's worked example, lead-in image cycling, decode round-trip. 133 tests pass.
+
+### Honestly experimental
+The pack encoder is fully verifiable offline and well-tested. The lead-in **transport** — negative-LBA 96-byte WRITEs — has not yet been validated on real hardware; CD-Text-in-SAO support is drive-dependent. Burn-ready, not burn-proven. Use `cdtext-dump` and a reference tool to sanity-check the packs first.
+
 ## [0.0.22] — 2026-05-07
 
 ### Added — proper DVD-Video authoring via dvdauthor

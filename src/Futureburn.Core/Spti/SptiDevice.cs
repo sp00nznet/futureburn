@@ -597,6 +597,58 @@ public sealed class SptiDevice : IDisposable
     }
 
     /// <summary>
+    /// MMC READ TOC/PMA/ATIP (opcode 0x43) format 0100b — the ATIP (Absolute
+    /// Time In Pre-groove) of a recordable disc. We use it for one field: the
+    /// start address of the lead-in, which is where CD-Text must be written.
+    /// <para>
+    /// The lead-in start is returned as an MSF that wraps near 99 minutes to
+    /// represent a negative LBA — e.g. 97:26:65 → LBA -11635. The program area
+    /// begins at LBA 0 (= MSF 00:02:00); the lead-in occupies the negative LBAs
+    /// from this value up to LBA -150.
+    /// </para>
+    /// </summary>
+    public int ReadAtipLeadInStartLba()
+    {
+        var data = new byte[32];
+        var cdb = new byte[10];
+        cdb[0] = MmcOpcodes.ReadTocPmaAtip;
+        cdb[2] = 0x04;     // Format 0100b = ATIP
+        cdb[7] = (byte)(data.Length >> 8);
+        cdb[8] = (byte)(data.Length & 0xFF);
+        SendScsi(cdb, cdbLength: 10, data, dataIn: true);
+
+        // ATIP descriptor: bytes 8-10 = start time of lead-in (Min, Sec, Frame).
+        int m = data[8], s = data[9], f = data[10];
+        int lba = (m * 60 + s) * 75 + f - 150;
+        // Lead-in MSF minutes are in the 90s — that's the negative-LBA wrap.
+        if (m >= 90) lba -= 100 * 60 * 75;
+        return lba;
+    }
+
+    /// <summary>
+    /// MMC WRITE 10 (0x2A) used for the CD-Text lead-in. Blocks here are 96-byte
+    /// R-W subchannel sectors (four 24-bit-expanded CD-Text packs), and
+    /// <paramref name="startLba"/> is negative (a lead-in address). The drive
+    /// knows these blocks are 96-byte CD-Text — not 2352-byte audio — because
+    /// the cue sheet's lead-in entries carry DATA FORM 0x41.
+    /// </summary>
+    public void WriteCdTextLeadIn(int startLba, int numBlocks, byte[] data, int timeoutSec = 60)
+    {
+        const int blockBytes = 96;
+        var cdb = new byte[16];
+        cdb[0] = MmcOpcodes.Write10;
+        // LBA is signed: a negative lead-in address packs as two's complement.
+        cdb[2] = (byte)((startLba >> 24) & 0xFF);
+        cdb[3] = (byte)((startLba >> 16) & 0xFF);
+        cdb[4] = (byte)((startLba >>  8) & 0xFF);
+        cdb[5] = (byte)( startLba        & 0xFF);
+        cdb[7] = (byte)((numBlocks >> 8) & 0xFF);
+        cdb[8] = (byte)( numBlocks       & 0xFF);
+        SendScsi(cdb, cdbLength: 10, data, dataIn: false,
+                 timeoutSec: timeoutSec, dataLength: numBlocks * blockBytes);
+    }
+
+    /// <summary>
     /// Send a SCSI command via IOCTL_SCSI_PASS_THROUGH_DIRECT.
     /// </summary>
     /// <param name="cdb">Command Descriptor Block (max 16 bytes used).</param>

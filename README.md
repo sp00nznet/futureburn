@@ -31,18 +31,18 @@ A passion project that grew teeth.
 - ✅ **DVD-Audio authoring** — `dvda-author <playlist-or-folder> <out>` decodes each track to LPCM WAV (16/44.1) and delegates to the external `dvda-author` tool (Sourceforge), which produces real spec-compliant `AUDIO_TS\` IFO/BUP/AOB files. Run `futureburn dvda-author-info` to check install. Note: PS4 and most modern players can't read DVD-Audio — playback needs a DVD-A-aware player (some early-2000s premium car audio systems and home-theater receivers do support it).
 - ✅ **Audio CD GUI workflow polish** — drag-and-drop reorder of tracks, right-click / F2 / double-click to rename a track, ▶ Play / ■ Stop preview buttons backed by NAudio.
 - ✅ True gapless DAO via SPTI cue sheet (experimental — `--gapless` flag; first hardware test pending)
+- ✅ **CD-Text writing** (experimental) — `burn <playlist> <drive> --engine spti --cdtext --album "..." --artist "..."` encodes artist + album + per-track titles into the disc lead-in, so car stereos show "Whatever You Want" instead of "Track 16". Complete pack encoder — 18-byte packs, the CCITT CRC-16, the mandatory `0x8F` size-info packs — plus the libburn-style lead-in transport (6-bit subchannel expansion, negative-LBA `WRITE`) wired into the SAO burn. `cdtext-dump <playlist>` prints the exact packs **offline** — no drive, no disc, no CD-R at risk — so you can eyeball or diff them against a reference tool before committing. First hardware burn still pending.
 - ✅ **LightScribe label burning** — `lightscribe-info` enumerates LightScribe-capable drives; `lightscribe-print <drive> <image>` converts any PNG/JPG/BMP into a 24-bit center-fit BMP and submits it to the LSS Public SDK (`LSPrintAPI.dll`). First real label burn confirmed: Van Gogh's *Enclosed Wheat Field* etched onto a CD-R top in ~16 min at best quality on the GE20LU10. The white whale, done. (Currently uses LSS's user-driven dialog so you click "Print" in the LSS UI; full programmatic submission is held up on a boost::program_options drive-identifier mystery — to be revisited.)
 - ✅ **GUI tile for LightScribe** — drag in an image, pick a drive + quality, click Burn. Mirror image of the audio-CD tile workflow.
 - ✅ **One-shot labeled audio CD**: `futureburn burn mix.m3u8 F: --image cover.png` — does the audio side first, auto-ejects, walks you through flipping the disc (with a sanity check that you've actually flipped it), then LightScribes the label. The original goal-stack collapsed into one command.
 
 ## What's coming
 
-- 🚧 **CD-Text** (in progress) — embed artist + album + track titles into the lead-in so car stereos / standalone players display "George Strait — One Night At A Time" instead of "Track 1". Requires SAO/DAO mode; v0.0.41 fixed the BCD encoding bug in our cue sheet builder that was making the drive reject SEND CUE SHEET. Next step: encode CD-Text packs into the cue sheet stream.
+- 🚧 **MKV → DVD-Video pipeline** (next up) — transcode an MKV to MPEG-2, author proper IFO/BUP navigation, build the VOBs, and burn the UDF disc. The building blocks already exist (`dvdv-author`, `dvdauthor` integration, ffmpeg); this stitches them into one end-to-end command.
 - ⬜ Strict-Finalized status flag for multi-track burns (disc plays everywhere we've tested, but `READ DISC INFO` reports `Incomplete` — likely needs a different MMC close-function value or a follow-up CLOSE function 6/7 sequence; cosmetic, not blocking playback)
 - ⬜ Headless LightScribe submission (works today through the LSS user dialog with one click; full programmatic submission is blocked on undocumented LSS internals — see the project memory for the dead-end map)
 - ⬜ MusicBrainz round-trip on burned discs (extend `cd-lookup` to recognize the discs we author ourselves)
 - ⬜ "What's loaded?" drive-enumeration UI tile
-- ⬜ MKV → DVD-Video pipeline (transcode + IFO/BUP/VOB authoring + UDF burn — a separate large subsystem)
 - ⬜ Blu-ray burning (when the test hardware arrives)
 - ⬜ Mac/Linux ports — long after Windows is rock solid
 

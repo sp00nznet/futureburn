@@ -155,6 +155,37 @@ public class SptiCueSheetTests
     }
 
     [Fact]
+    public void BuildAudioCd_CdTextSetsDataForm41OnLeadInPointers()
+    {
+        var tracks = new[]
+        {
+            new SptiCueSheet.Track(LengthSectors: 4500),
+            new SptiCueSheet.Track(LengthSectors: 4500),
+        };
+        var cue = SptiCueSheet.BuildAudioCd(tracks, gapless: true, cdText: true);
+
+        // A0/A1/A2 (descriptors 0,1,2) carry DATA FORM 0x41 — the 0x40 bit tells
+        // the drive CD-Text will be written into the lead-in.
+        Assert.Equal(0x41, cue[0 * 8 + 3]);
+        Assert.Equal(0x41, cue[1 * 8 + 3]);
+        Assert.Equal(0x41, cue[2 * 8 + 3]);
+
+        // Per-track body descriptors (index 3 onward) stay DATA FORM 0x00.
+        for (int d = 3; d < cue.Length / 8; d++)
+            Assert.Equal(0x00, cue[d * 8 + 3]);
+    }
+
+    [Fact]
+    public void BuildAudioCd_NoCdTextKeepsDataFormZero()
+    {
+        var cue = SptiCueSheet.BuildAudioCd(
+            new[] { new SptiCueSheet.Track(LengthSectors: 4500) },
+            gapless: true, cdText: false);
+        for (int d = 0; d < cue.Length / 8; d++)
+            Assert.Equal(0x00, cue[d * 8 + 3]);
+    }
+
+    [Fact]
     public void BuildAudioCd_RejectsZeroTracks()
     {
         Assert.Throws<ArgumentException>(() =>

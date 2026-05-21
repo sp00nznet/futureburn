@@ -40,8 +40,12 @@ public static class SptiCueSheet
 
     /// <summary>
     /// Build the cue sheet for a gapless audio CD with the given track lengths.
+    /// When <paramref name="cdText"/> is true, the lead-in pointer entries
+    /// (A0/A1/A2) carry DATA FORM 0x41 instead of 0x00 — the 0x40 bit tells the
+    /// drive that CD-Text subchannel data will be written into the lead-in.
     /// </summary>
-    public static byte[] BuildAudioCd(IReadOnlyList<Track> tracks, bool gapless = true)
+    public static byte[] BuildAudioCd(IReadOnlyList<Track> tracks, bool gapless = true,
+                                      bool cdText = false)
     {
         if (tracks.Count == 0) throw new ArgumentException("Need at least one track", nameof(tracks));
         if (tracks.Count > 99)  throw new ArgumentException("CD-DA limit is 99 tracks",  nameof(tracks));
@@ -68,6 +72,11 @@ public static class SptiCueSheet
         //   an INDEX 0 entry for the lead-in transition.
         var descriptors = new List<byte[]>(3 + tracks.Count * 2);
 
+        // DATA FORM for the lead-in pointer entries: 0x00 normally, 0x41 when
+        // CD-Text is to be stored in the lead-in (0x40 = "CD-Text present" bit,
+        // 0x01 = audio pause form). cdrdao and libburn both set this byte.
+        byte leadInForm = cdText ? (byte)0x41 : (byte)0x00;
+
         // A0: first track number = 1, session format = 0 (CD-DA / CD-ROM).
         // Track numbers in cue sheet entries are BCD-encoded (so they line up
         // with what the drive writes into the subcode Q-channel verbatim).
@@ -75,16 +84,16 @@ public static class SptiCueSheet
         // drive's BCD parser saw invalid nibbles (e.g. binary 10 = 0x0A, where
         // the low nibble 'A' is not a valid BCD digit) and rejected SEND CUE
         // SHEET with sense 0x5/0x26/0x00 (INVALID FIELD IN PARAMETER LIST).
-        descriptors.Add(MakeDescriptor(ctl: 0x01, tno: 0x00, index: 0xA0, dataForm: 0x00,
+        descriptors.Add(MakeDescriptor(ctl: 0x01, tno: 0x00, index: 0xA0, dataForm: leadInForm,
                                         b5: ToBcd(1), b6: 0x00, b7: 0x00));
 
         // A1: last track number (BCD).
-        descriptors.Add(MakeDescriptor(ctl: 0x01, tno: 0x00, index: 0xA1, dataForm: 0x00,
+        descriptors.Add(MakeDescriptor(ctl: 0x01, tno: 0x00, index: 0xA1, dataForm: leadInForm,
                                         b5: ToBcd(tracks.Count), b6: 0x00, b7: 0x00));
 
         // A2: lead-out start position.
         var (loM, loS, loF) = LbaToMsfBcd(leadOutLba);
-        descriptors.Add(MakeDescriptor(ctl: 0x01, tno: 0x00, index: 0xA2, dataForm: 0x00,
+        descriptors.Add(MakeDescriptor(ctl: 0x01, tno: 0x00, index: 0xA2, dataForm: leadInForm,
                                         b5: loM, b6: loS, b7: loF));
 
         // Per-track entries.
