@@ -39,19 +39,16 @@ public static class DvdauthorLocator
         yield return "dvdauthor";   // PATH
         yield return "dvdauthor.exe";
 
-        var pf    = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
-        var pfx86 = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86);
-        var lad   = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        var lad = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
 
         // DVDStyler bundles dvdauthor.exe — easiest install path on Windows
         // since DVDStyler is on winget (AlexThuering.DVDStyler).
-        foreach (var styler in new[] { pf, pfx86 })
+        foreach (var styler in ProgramFilesRoots())
         {
-            if (string.IsNullOrEmpty(styler)) continue;
             var dvdStylerRoot = Path.Combine(styler, "DVDStyler");
             yield return Path.Combine(dvdStylerRoot, "bin",   "dvdauthor.exe");
             yield return Path.Combine(dvdStylerRoot, "tools", "dvdauthor.exe");
-            yield return Path.Combine(dvdStylerRoot,         "dvdauthor.exe");
+            yield return Path.Combine(dvdStylerRoot,          "dvdauthor.exe");
         }
 
         // Scoop shim (extras bucket has dvdauthor)
@@ -71,12 +68,28 @@ public static class DvdauthorLocator
         }
 
         // Common manual install locations
-        if (!string.IsNullOrEmpty(pf))    yield return Path.Combine(pf,    "dvdauthor", "bin", "dvdauthor.exe");
-        if (!string.IsNullOrEmpty(pfx86)) yield return Path.Combine(pfx86, "dvdauthor", "bin", "dvdauthor.exe");
-        if (!string.IsNullOrEmpty(lad))   yield return Path.Combine(lad,   "Programs", "dvdauthor", "bin", "dvdauthor.exe");
+        foreach (var root in ProgramFilesRoots())
+            yield return Path.Combine(root, "dvdauthor", "bin", "dvdauthor.exe");
+        if (!string.IsNullOrEmpty(lad)) yield return Path.Combine(lad, "Programs", "dvdauthor", "bin", "dvdauthor.exe");
 
         yield return @"C:\dvdauthor\bin\dvdauthor.exe";
     }
+
+    /// <summary>
+    /// Every plausible "Program Files" root. The CLI and GUI build as x86 (for
+    /// the 32-bit LightScribe DLL), so under WOW64 <c>SpecialFolder.ProgramFiles</c>
+    /// resolves to "Program Files (x86)" — we must also consult <c>%ProgramW6432%</c>,
+    /// which always names the true 64-bit Program Files even from a 32-bit process.
+    /// DVDStyler installs into the 64-bit tree, so without this it's never found.
+    /// </summary>
+    internal static IEnumerable<string> ProgramFilesRoots() => new[]
+        {
+            Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
+            Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),
+            Environment.GetEnvironmentVariable("ProgramW6432") ?? "",
+        }
+        .Where(p => !string.IsNullOrEmpty(p))
+        .Distinct(StringComparer.OrdinalIgnoreCase);
 
     private static DvdauthorInfo? TryRun(string pathOrName)
     {

@@ -28,7 +28,13 @@ public static class FfprobeRunner
         TimeSpan? Duration,
         int? Width,
         int? Height,
-        string? Language);
+        string? Language,
+        string? Title = null)
+    {
+        public bool IsVideo    => CodecType == "video";
+        public bool IsAudio    => CodecType == "audio";
+        public bool IsSubtitle => CodecType == "subtitle";
+    }
 
     public sealed record FormatInfo(
         string FormatName,
@@ -38,9 +44,25 @@ public static class FfprobeRunner
         long? Size,
         IReadOnlyDictionary<string, string> Tags);
 
+    /// <summary>One chapter marker (MKV / MP4 chapters, etc.).</summary>
+    public sealed record ChapterInfo(
+        int Id,
+        TimeSpan Start,
+        TimeSpan End,
+        string? Title)
+    {
+        public TimeSpan Duration => End > Start ? End - Start : TimeSpan.Zero;
+    }
+
     public sealed record ProbeResult(
         FormatInfo Format,
-        IReadOnlyList<StreamInfo> Streams);
+        IReadOnlyList<StreamInfo> Streams,
+        IReadOnlyList<ChapterInfo> Chapters)
+    {
+        public IEnumerable<StreamInfo> VideoStreams    => Streams.Where(s => s.IsVideo);
+        public IEnumerable<StreamInfo> AudioStreams    => Streams.Where(s => s.IsAudio);
+        public IEnumerable<StreamInfo> SubtitleStreams => Streams.Where(s => s.IsSubtitle);
+    }
 
     public static ProbeResult Probe(string input)
     {
@@ -61,6 +83,7 @@ public static class FfprobeRunner
         psi.ArgumentList.Add("-print_format"); psi.ArgumentList.Add("json");
         psi.ArgumentList.Add("-show_format");
         psi.ArgumentList.Add("-show_streams");
+        psi.ArgumentList.Add("-show_chapters");
         psi.ArgumentList.Add(input);
 
         using var p = Process.Start(psi)
@@ -94,6 +117,7 @@ public static class FfprobeRunner
         {
             foreach (var s in sArr.EnumerateArray())
             {
+                var tags = ExtractTags(s);
                 streams.Add(new StreamInfo(
                     Index:           s.GetProperty("index").GetInt32(),
                     CodecType:       TryString(s, "codec_type")      ?? "",
@@ -106,12 +130,25 @@ public static class FfprobeRunner
                     Duration:        TryDoubleSeconds(s, "duration"),
                     Width:           TryInt(s, "width"),
                     Height:          TryInt(s, "height"),
-                    Language:        s.TryGetProperty("tags", out var t) && t.TryGetProperty("language", out var l)
-                                       ? l.GetString() : null));
+                    Language:        tags.GetValueOrDefault("language"),
+                    Title:           tags.GetValueOrDefault("title")));
             }
         }
 
-        return new ProbeResult(format, streams);
+        var chapters = new List<ChapterInfo>();
+        if (root.TryGetProperty("chapters", out var cArr))
+        {
+            foreach (var c in cArr.EnumerateArray())
+            {
+                chapters.Add(new ChapterInfo(
+                    Id:    TryInt(c, "id") ?? chapters.Count,
+                    Start: TryDoubleSeconds(c, "start_time") ?? TimeSpan.Zero,
+                    End:   TryDoubleSeconds(c, "end_time")   ?? TimeSpan.Zero,
+                    Title: ExtractTags(c).GetValueOrDefault("title")));
+            }
+        }
+
+        return new ProbeResult(format, streams, chapters);
     }
 
     private static string? LocateFfprobe()

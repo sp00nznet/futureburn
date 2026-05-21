@@ -4,6 +4,25 @@ All notable changes to futureburn will land here. Format roughly follows [Keep a
 
 ## [Unreleased]
 
+## [0.0.43] — 2026-05-21
+
+### Added — MKV → DVD-Video pipeline
+`dvdv-author` graduated from "transcode one title" into a real pipeline: feed it an MKV (or MP4, AVI, ...) and it carries the structure through to a hardware-playable DVD-Video — chapters, every audio track, and subtitles — optionally burning the disc in the same command.
+- **Chapters** — `FfprobeRunner` now runs `-show_chapters` and parses chapter markers; they're authored as real DVD chapter stops (next/previous-chapter works on the remote).
+- **Multiple audio tracks** — the transcode maps every audio stream (up to the DVD limit of 8) to AC-3; each is declared in the dvdauthor XML with its language so players show language labels.
+- **Subtitles** — text subtitle tracks are extracted to SRT and muxed into the program stream as DVD subpicture streams via `spumux` (new `SpumuxRunner`). Bitmap subtitles (VobSub/PGS) are detected and skipped for now.
+- **One-command burn** — `dvdv-author <in> <out> --burn <drive>` authors then builds a UDF image and burns it. The whole MKV-to-disc path in one step.
+- `DvdauthorRunner` gained a `DvdTitleSpec` + `BuildXml` that emit chapter lists, per-stream `<audio>`/`<subpicture>` language declarations; `IsoLanguage` maps ISO 639-2 (`eng`) to the two-letter codes (`en`) DVD-Video wants.
+
+### Fixed
+- `DvdauthorLocator` never found DVDStyler's bundled `dvdauthor.exe`: the CLI builds as x86, so under WOW64 `SpecialFolder.ProgramFiles` resolves to "Program Files (x86)" and the 64-bit `C:\Program Files\DVDStyler\` was never checked. Now also consults `%ProgramW6432%`.
+
+### Tests
+- 30 new tests: ffprobe chapter/stream parsing, dvdauthor chapter-time formatting + XML generation, spumux XML, ISO language mapping. 162 tests pass. Pipeline validated end-to-end on a synthesized MKV (3 chapters, 2 audio, 1 subtitle) → `validate-folder` confirms a well-formed DVD-Video with all streams present.
+
+### Honestly experimental
+Authoring is verified against real tools and a real MKV. The `--burn` step reuses the already-proven data-burn path but hasn't had a dedicated DVD-R hardware run. Bitmap subtitles and DVD menus aren't supported yet.
+
 ## [0.0.42] — 2026-05-21
 
 ### Added — CD-Text writing
