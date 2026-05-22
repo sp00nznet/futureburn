@@ -11,7 +11,9 @@
 #      *your* PATH but not on the gitlab-runner service account's PATH:
 #        winget install Microsoft.DotNet.SDK.8 --scope machine
 #      (or grab the installer from https://dotnet.microsoft.com/download —
-#       it lands in C:\Program Files\dotnet and updates the system PATH.)
+#       it lands in C:\Program Files\dotnet and updates the system PATH.
+#       For a Proxmox-hosted runner there is a script that does this end-to-end:
+#       scripts/install_dotnet8_windows_runner.py)
 #   3. Restart the runner so the new PATH takes effect in the service:
 #        Restart-Service gitlab-runner
 #   4. Install gitlab-runner and register it with the shell executor:
@@ -70,27 +72,29 @@ test:
   # then add:  reports: { junit: test-results/futureburn-tests.xml }
 
 # ── publish ─────────────────────────────────────────────────────────────────
-# Two self-contained x86 builds — they run on any Windows box with no .NET
-# runtime installed (true to the "no installers" spirit of the project).
+# Two self-contained, SINGLE-FILE x86 builds — the entire .NET runtime, every
+# managed and native dependency, all bundled into one .exe per project.
+# Download, double-click, done — no installer, no separate runtime, no folder
+# of DLLs. True to the "no installers" spirit of the project.
 
-# The "cmd" build — the Futureburn.Cli command-line tool.
+# The "cmd" build — the Futureburn.Cli command-line tool, one .exe.
 publish:cli:
   stage: publish
   script:
-    - dotnet publish src/Futureburn.Cli/Futureburn.Cli.csproj -c Release -r $RUNTIME --self-contained true -o publish/cli
+    - dotnet publish src/Futureburn.Cli/Futureburn.Cli.csproj -c Release -r $RUNTIME --self-contained true -p:PublishSingleFile=true -o publish/cli
   artifacts:
     name: "futureburn-cli-$CI_COMMIT_SHORT_SHA"
     paths:
-      - publish/cli/
+      - publish/cli/Futureburn.Cli.exe
     expire_in: 30 days
 
-# The "windows" build — the Futureburn.Gui WPF application.
+# The "windows" build — the Futureburn.Gui WPF application, one .exe.
 publish:gui:
   stage: publish
   script:
-    - dotnet publish src/Futureburn.Gui/Futureburn.Gui.csproj -c Release -r $RUNTIME --self-contained true -o publish/gui
+    - dotnet publish src/Futureburn.Gui/Futureburn.Gui.csproj -c Release -r $RUNTIME --self-contained true -p:PublishSingleFile=true -o publish/gui
   artifacts:
     name: "futureburn-gui-$CI_COMMIT_SHORT_SHA"
     paths:
-      - publish/gui/
+      - publish/gui/Futureburn.Gui.exe
     expire_in: 30 days
