@@ -7,12 +7,17 @@
 #
 #  ── One-time runner setup (on the GitLab server side) ──────────────────────
 #   1. A Windows 10/11 or Windows Server machine.
-#   2. Install the .NET 8 SDK and put it on PATH:
-#        winget install Microsoft.DotNet.SDK.8
-#   3. Install gitlab-runner, then register it with the shell executor:
+#   2. Install the .NET 8 SDK MACHINE-WIDE — a per-user install puts dotnet on
+#      *your* PATH but not on the gitlab-runner service account's PATH:
+#        winget install Microsoft.DotNet.SDK.8 --scope machine
+#      (or grab the installer from https://dotnet.microsoft.com/download —
+#       it lands in C:\Program Files\dotnet and updates the system PATH.)
+#   3. Restart the runner so the new PATH takes effect in the service:
+#        Restart-Service gitlab-runner
+#   4. Install gitlab-runner and register it with the shell executor:
 #        gitlab-runner register --url https://buildforever.cloud/ `
 #          --executor shell --shell pwsh
-#   4. Tag that runner `windows`, `win10`, `shell` (in the runner's settings
+#   5. Tag that runner `windows`, `win10`, `shell` (in the runner's settings
 #      on GitLab) so the jobs below land on it.
 #
 #  Until a runner carrying all three tags exists, pipelines stay "pending" —
