@@ -108,14 +108,14 @@ publish:gui:
 # Every push to main updates the main/ slot in place; any future git tag would
 # land in its own subdir (e.g. /mnt/releases/futureburn/v0.0.55/).
 #
-# The Windows side of that mount is exposed via SMB as \\192.168.100.22\releases.
+# The Windows side of that mount is exposed via SMB as \\192.168.100.23\releases.
 deploy:windows:
   stage: deploy
   needs:
     - publish:cli
     - publish:gui
   script:
-    - 'net use R: \\192.168.100.22\releases gitlab /user:root'
+    - 'net use R: \\192.168.100.23\releases gitlab /user:root'
     - 'New-Item -ItemType Directory -Force -Path "R:\$env:CI_PROJECT_NAME\$env:CI_COMMIT_REF_NAME"'
     - 'Copy-Item -Force publish\cli\Futureburn.Cli.exe "R:\$env:CI_PROJECT_NAME\$env:CI_COMMIT_REF_NAME\"'
     - 'Copy-Item -Force publish\gui\Futureburn.Gui.exe "R:\$env:CI_PROJECT_NAME\$env:CI_COMMIT_REF_NAME\"'
