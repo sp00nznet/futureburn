@@ -42,7 +42,8 @@ public static class MkvDvdPipeline
         TimeSpan Duration,
         IReadOnlyList<string> AudioLanguages,
         IReadOnlyList<string> TextSubtitleLanguages,
-        int BitmapSubtitlesSkipped,
+        // Bitmap (VobSub / PGS) subtitle languages — carried via ffmpeg's dvdsub.
+        IReadOnlyList<string> BitmapSubtitleLanguages,
         int Chapters);
 
     /// <summary>What the pipeline actually produced.</summary>
@@ -68,19 +69,19 @@ public static class MkvDvdPipeline
 
         var audio = probe.AudioStreams.Take(MaxAudioStreams).ToList();
         var subs  = probe.SubtitleStreams.ToList();
-        var textSubs = subs.Where(s => IsTextSubtitle(s.CodecName)).ToList();
+        var textSubs   = subs.Where(s =>  IsTextSubtitle(s.CodecName)).ToList();
+        var bitmapSubs = subs.Where(s => !IsTextSubtitle(s.CodecName)).ToList();
 
         return new Probed(
-            VideoCodec:             video.CodecName,
-            Width:                  video.Width  ?? 0,
-            Height:                 video.Height ?? 0,
-            Aspect:                 GuessAspect(video),
-            Duration:               probe.Format.Duration ?? TimeSpan.Zero,
-            AudioLanguages:         audio.Select(a => a.Language ?? "und").ToList(),
-            TextSubtitleLanguages:  textSubs.Take(MaxSubpictureStreams)
-                                            .Select(s => s.Language ?? "und").ToList(),
-            BitmapSubtitlesSkipped: subs.Count - textSubs.Count,
-            Chapters:               probe.Chapters.Count);
+            VideoCodec:              video.CodecName,
+            Width:                   video.Width  ?? 0,
+            Height:                  video.Height ?? 0,
+            Aspect:                  GuessAspect(video),
+            Duration:                probe.Format.Duration ?? TimeSpan.Zero,
+            AudioLanguages:          audio.Select(a => a.Language ?? "und").ToList(),
+            TextSubtitleLanguages:   textSubs.Select(s => s.Language ?? "und").ToList(),
+            BitmapSubtitleLanguages: bitmapSubs.Select(s => s.Language ?? "und").ToList(),
+            Chapters:                probe.Chapters.Count);
     }
 
     /// <summary>
@@ -102,13 +103,20 @@ public static class MkvDvdPipeline
             ?? throw new InvalidOperationException("Input has no video stream.");
 
         var audioStreams = probe.AudioStreams.Take(MaxAudioStreams).ToList();
-        var subList = probe.SubtitleStreams.ToList();
-        var textSubs = new List<(int SubIndex, FfprobeRunner.StreamInfo Stream)>();
+
+        // Subtitle streams split by kind: bitmap subs (VobSub/PGS) ride through
+        // the ffmpeg transcode as dvdsub; text subs are rendered later by spumux.
+        var subList    = probe.SubtitleStreams.ToList();
+        var textSubs   = new List<(int SubIndex, FfprobeRunner.StreamInfo Stream)>();
+        var bitmapSubs = new List<(int SubIndex, FfprobeRunner.StreamInfo Stream)>();
         for (int i = 0; i < subList.Count; i++)
-            if (IsTextSubtitle(subList[i].CodecName))
-                textSubs.Add((i, subList[i]));
-        if (textSubs.Count > MaxSubpictureStreams)
-            textSubs = textSubs.Take(MaxSubpictureStreams).ToList();
+            (IsTextSubtitle(subList[i].CodecName) ? textSubs : bitmapSubs).Add((i, subList[i]));
+        // DVD-Video allows 32 subpicture streams total; bitmap subs take slots first.
+        if (bitmapSubs.Count > MaxSubpictureStreams)
+            bitmapSubs = bitmapSubs.Take(MaxSubpictureStreams).ToList();
+        int textBudget = MaxSubpictureStreams - bitmapSubs.Count;
+        if (textSubs.Count > textBudget)
+            textSubs = textSubs.Take(textBudget).ToList();
 
         var chapterStarts = probe.Chapters.Select(c => c.Start).ToList();
         string aspect = GuessAspect(video);
@@ -127,7 +135,11 @@ public static class MkvDvdPipeline
             onLog?.Invoke($"Transcoding via ffmpeg ({ffmpeg.VersionLine}) ...");
             var ffargs = new List<string> { "-y", "-i", opts.InputVideo, "-map", "0:v:0" };
             for (int i = 0; i < audioStreams.Count; i++) { ffargs.Add("-map"); ffargs.Add($"0:a:{i}"); }
+            foreach (var (subIdx, _) in bitmapSubs) { ffargs.Add("-map"); ffargs.Add($"0:s:{subIdx}"); }
             ffargs.Add("-target"); ffargs.Add(opts.IsPal ? "pal-dvd" : "ntsc-dvd");
+            // Bitmap subs re-encode to the DVD subpicture format — bitmap→bitmap,
+            // which ffmpeg allows (text→bitmap it doesn't — those go via spumux).
+            if (bitmapSubs.Count > 0) { ffargs.Add("-c:s"); ffargs.Add("dvdsub"); }
             ffargs.Add("-aspect"); ffargs.Add(aspect);
             // Cap near DVD-5 capacity; dvdauthor splits into 1 GB VOBs itself.
             ffargs.Add("-fs"); ffargs.Add("4290000000");
@@ -147,9 +159,18 @@ public static class MkvDvdPipeline
                 throw new InvalidOperationException($"ffmpeg transcode failed (exit {rr.ExitCode}).");
             onProgress?.Invoke(0.80);
 
-            // --- Subtitles: spumux each text track into the stream. (0.80 .. 0.92)
+            // --- Subtitles. Bitmap subs are already in the MPEG-PS from the
+            // transcode above (streams 0..B-1); seed subLangs with them so the
+            // text subs spumux adds land at the stream slots after them, and the
+            // dvdauthor <subpicture> order stays bitmap-then-text.
             string authoredMpg = tempMpg;
             var subLangs = new List<string>();
+            foreach (var (_, stream) in bitmapSubs)
+                subLangs.Add(IsoLanguage.To2Letter(stream.Language));
+            if (bitmapSubs.Count > 0)
+                onLog?.Invoke($"{bitmapSubs.Count} bitmap subtitle(s) carried via ffmpeg dvdsub.");
+
+            // --- Text subtitles: spumux each one in. (0.80 .. 0.92)
             if (textSubs.Count > 0 && dvdauthor is not null)
             {
                 var spumux = SpumuxRunner.Locate();

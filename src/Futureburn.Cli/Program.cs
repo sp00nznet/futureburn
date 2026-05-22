@@ -1312,9 +1312,9 @@ static int DvdVideoAuthorCommand(string[] args)
     Console.WriteLine($"  Video:     {probed.VideoCodec} {probed.Width}x{probed.Height}  ({probed.Duration:hh\\:mm\\:ss})");
     Console.WriteLine($"  Audio:     {probed.AudioLanguages.Count} track(s)" +
         (probed.AudioLanguages.Count > 0 ? "  [" + string.Join(", ", probed.AudioLanguages) + "]" : ""));
-    Console.WriteLine($"  Subtitles: {probed.TextSubtitleLanguages.Count} text track(s)" +
-        (probed.BitmapSubtitlesSkipped > 0
-            ? $"  ({probed.BitmapSubtitlesSkipped} bitmap track(s) skipped — text subtitles only for now)" : ""));
+    Console.WriteLine($"  Subtitles: {probed.TextSubtitleLanguages.Count} text" +
+        (probed.BitmapSubtitleLanguages.Count > 0
+            ? $" + {probed.BitmapSubtitleLanguages.Count} bitmap" : "") + " track(s)");
     Console.WriteLine($"  Chapters:  {probed.Chapters}" +
         (menu && probed.Chapters < 2 ? "  (none — will auto-generate for the scene menu)" : ""));
     Console.WriteLine($"  Menu:      {(menu ? "navigable menu (Play / Scene Selection)" : "auto-play on insert")}");

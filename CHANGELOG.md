@@ -4,6 +4,13 @@ All notable changes to futureburn will land here. Format roughly follows [Keep a
 
 ## [Unreleased]
 
+## [0.0.48] — 2026-05-22
+
+### Added — bitmap subtitles in the MKV→DVD pipeline
+Bitmap subtitle tracks (VobSub, PGS) are now carried into the DVD instead of being detected-and-skipped. ffmpeg re-encodes them straight to the DVD subpicture format in the transcode (`-c:s dvdsub`) — bitmap→bitmap, which ffmpeg allows; text→bitmap it doesn't, so text subtitles still go via `spumux`. The dvdauthor `<subpicture>` declarations are ordered bitmap-then-text to match the muxed stream order, and the 32-subpicture DVD limit is shared across both kinds.
+
+Verified end-to-end: a DVD rip's VobSub track → `dvdv-author` → a `validate-folder`-confirmed DVD-Video whose VOB carries the `dvd_subtitle` stream.
+
 ## [0.0.47] — 2026-05-21
 
 ### Added — DVD menus
