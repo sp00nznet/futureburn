@@ -4,6 +4,11 @@ All notable changes to futureburn will land here. Format roughly follows [Keep a
 
 ## [Unreleased]
 
+## [0.0.51] — 2026-05-22
+
+### Changed — merged the Drives view into CD Info
+v0.0.50's separate Drives tile overlapped almost entirely with CD Info, which already enumerates every drive and inspects the loaded disc. So they're merged: CD Info now also shows a one-line **suggested action** per drive (blank → ready to burn, finalized → ready to rip, has-data → ...) — the one genuinely new bit Drives had. The standalone Drives window is gone and the main-window tile grid is back to a clean 2×2.
+
 ## [0.0.50] — 2026-05-22
 
 ### Added — Drives tile (what's loaded, at a glance)

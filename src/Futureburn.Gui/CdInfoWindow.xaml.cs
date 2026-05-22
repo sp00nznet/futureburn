@@ -64,6 +64,8 @@ public partial class CdInfoWindow : Window
 
         var loaded = d.CurrentProfiles.Where(p => p.Code != 0).Select(p => p.Name).ToList();
         sb.AppendLine($"Loaded: {(loaded.Count > 0 ? string.Join(", ", loaded) : "(no disc)")}");
+        if (loaded.Count > 0 && SuggestAction(d) is { } hint)
+            sb.AppendLine($"→ {hint}");
         sb.AppendLine();
 
         if (loaded.Count == 0)
@@ -161,6 +163,32 @@ public partial class CdInfoWindow : Window
         {
             sb.AppendLine();
             sb.AppendLine($"(SCSI pass-through unavailable: {ex.Message})");
+        }
+    }
+
+    // A one-line "what would you do with this disc" hint, from the drive's
+    // SCSI disc status. Null when SCSI pass-through isn't available.
+    private static string? SuggestAction(OpticalDrive d)
+    {
+        if (d.PrimaryMount is not { Length: >= 1 } m || !char.IsLetter(m[0])) return null;
+        try
+        {
+            using var dev = SptiDevice.OpenDriveLetter(m[0]);
+            var info = dev.ReadDiscInformation();
+            return info.Status switch
+            {
+                SptiDevice.DiscStatus.Empty => d.WritableProfiles.Any()
+                    ? "Blank — ready to burn."
+                    : "Blank disc (this drive can't write).",
+                SptiDevice.DiscStatus.Finalized => "Finalized — ready to read or rip.",
+                _ => info.Erasable
+                    ? "Has data, erasable — can be wiped and reused."
+                    : "Has data.",
+            };
+        }
+        catch
+        {
+            return null;
         }
     }
 

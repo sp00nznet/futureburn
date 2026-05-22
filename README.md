@@ -61,11 +61,9 @@ The four-tile main window — pick what you want to do:
 
 ![Burn Blu-ray / DVD window](docs/screenshots/burn-dvd.png)
 
-**CD Info** — full SCSI readout of whatever's loaded: drive capabilities, finalization status, and complete TOC with per-track type and duration. Same data the CLI's `cd-info` command surfaces, just clickable:
+**CD Info** — every optical drive and the disc in it: capabilities, what's loaded, a one-line suggested action (blank → ready to burn, finalized → ready to rip, ...), finalization status, and the complete TOC with per-track type and duration. Same data the CLI's `cd-info` command surfaces, just clickable:
 
 ![CD Info window](docs/screenshots/cd-info.png)
-
-**Drives** — an at-a-glance dashboard of every optical drive: what disc is in it, whether it's blank / finalized / has data, and a suggested next action. The quick overview to CD Info's deep dive.
 
 ---
 
