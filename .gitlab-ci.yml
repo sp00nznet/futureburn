@@ -12,10 +12,10 @@
 #   3. Install gitlab-runner, then register it with the shell executor:
 #        gitlab-runner register --url https://buildforever.cloud/ `
 #          --executor shell --shell pwsh
-#   4. Tag that runner `windows` (in the runner's settings on GitLab) so the
-#      jobs below land on it.
+#   4. Tag that runner `windows`, `win10`, `shell` (in the runner's settings
+#      on GitLab) so the jobs below land on it.
 #
-#  Until a runner with the `windows` tag exists, pipelines stay "pending" —
+#  Until a runner carrying all three tags exists, pipelines stay "pending" —
 #  that's expected, not a failure.
 # ============================================================================
 
@@ -32,9 +32,12 @@ variables:
   RUNTIME: "win-x86"
 
 # Every job runs on the Windows runner.
+# Multiple tags are ANDed — the runner must carry all three.
 default:
   tags:
     - windows
+    - win10
+    - shell
 
 # ── build ───────────────────────────────────────────────────────────────────
 # Does the whole solution still compile? Core (AnyCPU) + Cli + Gui (x86).
