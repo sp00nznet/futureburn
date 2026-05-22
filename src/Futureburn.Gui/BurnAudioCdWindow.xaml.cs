@@ -489,15 +489,6 @@ public partial class BurnAudioCdWindow : Window
         if (speedStr.EndsWith("x") && int.TryParse(speedStr.AsSpan(0, speedStr.Length - 1), out int x))
             cdSpeedX = x;
 
-        // Confirm.
-        var summary = $"This will write {_tracks.Count} tracks ({TotalText.Text.Split(',')[1].Trim()}) " +
-                      $"to {drive.PrimaryMount} via IMAPI {engine}.\n\n" +
-                      $"Speed: {(cdSpeedX is { } sp ? sp + "x" : "drive default")}\n\n" +
-                      $"Continue?";
-        if (MessageBox.Show(this, summary, "Confirm burn",
-                            MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
-            return;
-
         if (engine != "spti")
         {
             MessageBox.Show(this,
@@ -508,10 +499,39 @@ public partial class BurnAudioCdWindow : Window
             return;
         }
 
-        await DoBurnAsync(drive, cdSpeedX);
+        bool cdTextEnabled = CdTextCheck.IsChecked == true;
+        // CD-Text lives in the lead-in, which only SAO (gapless) recording fills.
+        bool gapless = GaplessCheck.IsChecked == true || cdTextEnabled;
+        string? album  = string.IsNullOrWhiteSpace(AlbumBox.Text)  ? null : AlbumBox.Text.Trim();
+        string? artist = string.IsNullOrWhiteSpace(ArtistBox.Text) ? null : ArtistBox.Text.Trim();
+
+        // Confirm.
+        var modeNote = cdTextEnabled ? "gapless DAO + CD-Text"
+                     : gapless       ? "gapless DAO"
+                     :                 "track-at-once, 2-sec gaps";
+        var summary = $"This will write {_tracks.Count} tracks ({TotalText.Text.Split(',')[1].Trim()}) " +
+                      $"to {drive.PrimaryMount} ({modeNote}).\n\n" +
+                      $"Speed: {(cdSpeedX is { } sp ? sp + "x" : "drive default")}\n\n" +
+                      $"Continue?";
+        if (MessageBox.Show(this, summary, "Confirm burn",
+                            MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
+            return;
+
+        await DoBurnAsync(drive, cdSpeedX, gapless, cdTextEnabled, album, artist);
     }
 
-    private async Task DoBurnAsync(OpticalDrive drive, int? cdSpeedX)
+    // Enable the album/artist fields only when CD-Text is on; CD-Text forces
+    // the gapless/SAO path, so tick that too.
+    private void CdTextCheck_Changed(object sender, RoutedEventArgs e)
+    {
+        bool on = CdTextCheck.IsChecked == true;
+        AlbumBox.IsEnabled  = on;
+        ArtistBox.IsEnabled = on;
+        if (on) GaplessCheck.IsChecked = true;
+    }
+
+    private async Task DoBurnAsync(OpticalDrive drive, int? cdSpeedX,
+                                   bool gapless, bool cdTextEnabled, string? album, string? artist)
     {
         _burning = true;
         BurnBtn.IsEnabled = false;
@@ -529,6 +549,16 @@ public partial class BurnAudioCdWindow : Window
             {
                 var plan = SptiAudioCdBurner.Plan(drive, playlist, tempDir);
 
+                // Build CD-Text from --album/--artist + the per-track titles.
+                SptiCdText.Disc? cdTextDisc = null;
+                if (cdTextEnabled)
+                {
+                    var cdTracks = plan.Tracks
+                        .Select(t => new SptiCdText.Track(t.Title, Performer: null)).ToList();
+                    var disc = new SptiCdText.Disc(album, artist, cdTracks);
+                    if (disc.HasAnything) cdTextDisc = disc;
+                }
+
                 Dispatcher.Invoke(() =>
                 {
                     StatusText.Text = $"Burning {plan.Tracks.Count} tracks ...";
@@ -538,6 +568,8 @@ public partial class BurnAudioCdWindow : Window
                 SptiAudioCdBurner.ExecuteBurn(
                     plan,
                     requestedCdSpeedX: cdSpeedX,
+                    gapless: gapless,
+                    cdText: cdTextDisc,
                     onTrackStart: (current, total) =>
                     {
                         Dispatcher.Invoke(() =>

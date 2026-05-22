@@ -4,6 +4,17 @@ All notable changes to futureburn will land here. Format roughly follows [Keep a
 
 ## [Unreleased]
 
+## [0.0.45] — 2026-05-21
+
+### Added — recent features wired into the WPF GUI
+The CD-Text, gapless, and MKV→DVD work was all CLI-only. Now it's clickable.
+- **`MkvDvdPipeline`** — the MKV→DVD orchestration (probe → transcode → spumux → dvdauthor) was extracted out of the CLI into `Futureburn.Core.Authoring`, with log + 0..1 progress callbacks, so the CLI and GUI drive the same code. `dvdv-author` is now a thin wrapper over it.
+- **Burn Blu-ray / DVD tile → "Choose video..."** — pick an MKV/MP4/AVI and the window transcodes + authors a real DVD-Video, builds the UDF image, and is ready to burn. The tile's "drop your movie" promise is finally true.
+- **Burn Audio CD tile → Gapless + CD-Text** — a checkbox row with Gapless (DAO) and CD-Text, plus album/artist fields. Ticking CD-Text enables the fields and implies gapless. Track titles come from the playlist.
+
+### Tests
+- 15 new tests for the extracted pipeline helpers (subtitle classification, aspect guessing, ffmpeg progress parsing). 177 tests pass.
+
 ## [0.0.44] — 2026-05-21
 
 ### Fixed — two burn-path bugs, found burning a real DVD-Video

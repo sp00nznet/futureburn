@@ -1279,13 +1279,6 @@ static int DvdVideoAuthorCommand(string[] args)
         return 1;
     }
 
-    var ffmpeg = Futureburn.Core.Ffmpeg.FfmpegRunner.Locate();
-    if (ffmpeg is null)
-    {
-        Console.Error.WriteLine("ffmpeg not found. Install with: winget install Gyan.FFmpeg");
-        return 1;
-    }
-
     // Validate the burn target up front — don't transcode for an hour then fail.
     OpticalDrive? burnTarget = null;
     if (burnDrive is not null)
@@ -1299,180 +1292,57 @@ static int DvdVideoAuthorCommand(string[] args)
         }
     }
 
-    var dvdauthor = skeletonOnly ? null : Futureburn.Core.Tools.DvdauthorRunner.Locate();
-    bool useDvdauthor = dvdauthor is not null;
-
-    // Probe the input: video, audio tracks, subtitle tracks, chapters.
-    Futureburn.Core.Ffmpeg.FfprobeRunner.ProbeResult probe;
-    try { probe = Futureburn.Core.Ffmpeg.FfprobeRunner.Probe(input); }
+    // Probe the input and show the plan.
+    Futureburn.Core.Authoring.MkvDvdPipeline.Probed probed;
+    try { probed = Futureburn.Core.Authoring.MkvDvdPipeline.Probe(input); }
     catch (Exception ex)
     {
         Console.Error.WriteLine($"Couldn't probe the input: {ex.Message}");
         return 1;
     }
 
-    var videoStream = probe.VideoStreams.FirstOrDefault();
-    if (videoStream is null)
-    {
-        Console.Error.WriteLine("Input has no video stream — can't author a DVD-Video.");
-        return 1;
-    }
-
-    // DVD-Video allows up to 8 audio + 32 subpicture streams.
-    var audioStreams = probe.AudioStreams.Take(8).ToList();
-    var subStreams   = probe.SubtitleStreams.ToList();
-    var textSubs     = new List<(int SubIndex, Futureburn.Core.Ffmpeg.FfprobeRunner.StreamInfo Stream)>();
-    for (int i = 0; i < subStreams.Count; i++)
-        if (IsTextSubtitle(subStreams[i].CodecName)) textSubs.Add((i, subStreams[i]));
-    int bitmapSubCount = subStreams.Count - textSubs.Count;
-    if (textSubs.Count > 32) textSubs = textSubs.Take(32).ToList();
-
-    var chapterStarts = probe.Chapters.Select(c => c.Start).ToList();
-    string aspect = GuessAspect(videoStream);
-
     Console.WriteLine();
     Console.WriteLine($"  Input:     {input}");
     Console.WriteLine($"  Output:    {outFolder}");
-    Console.WriteLine($"  System:    {(isPal ? "PAL" : "NTSC")}  ({aspect})");
+    Console.WriteLine($"  System:    {(isPal ? "PAL" : "NTSC")}  ({probed.Aspect})");
     Console.WriteLine($"  Label:     {label}");
-    Console.WriteLine($"  Video:     {videoStream.CodecName} {videoStream.Width}x{videoStream.Height}");
-    Console.WriteLine($"  Audio:     {audioStreams.Count} track(s)" +
-        (audioStreams.Count > 0 ? "  [" + string.Join(", ", audioStreams.Select(a => a.Language ?? "und")) + "]" : ""));
-    Console.WriteLine($"  Subtitles: {textSubs.Count} text track(s)" +
-        (bitmapSubCount > 0 ? $"  ({bitmapSubCount} bitmap track(s) skipped — text subtitles only for now)" : ""));
-    Console.WriteLine($"  Chapters:  {chapterStarts.Count}");
-    Console.WriteLine($"  Mode:      {(useDvdauthor ? "dvdauthor (real IFOs — plays in hardware players)" : "skeleton IFOs (VLC-only)")}");
+    Console.WriteLine($"  Video:     {probed.VideoCodec} {probed.Width}x{probed.Height}  ({probed.Duration:hh\\:mm\\:ss})");
+    Console.WriteLine($"  Audio:     {probed.AudioLanguages.Count} track(s)" +
+        (probed.AudioLanguages.Count > 0 ? "  [" + string.Join(", ", probed.AudioLanguages) + "]" : ""));
+    Console.WriteLine($"  Subtitles: {probed.TextSubtitleLanguages.Count} text track(s)" +
+        (probed.BitmapSubtitlesSkipped > 0
+            ? $"  ({probed.BitmapSubtitlesSkipped} bitmap track(s) skipped — text subtitles only for now)" : ""));
+    Console.WriteLine($"  Chapters:  {probed.Chapters}");
     if (burnTarget is not null)
         Console.WriteLine($"  Burn to:   {burnTarget.PrimaryMount}  {burnTarget.VendorId} {burnTarget.ProductId}");
-    if (!useDvdauthor && (chapterStarts.Count > 0 || audioStreams.Count > 1 || textSubs.Count > 0))
-    {
-        Console.WriteLine();
-        Console.WriteLine("  ⚠ Skeleton mode can't carry chapters, multiple audio tracks, or");
-        Console.WriteLine("    subtitles. Install dvdauthor — run `futureburn dvdauthor` for help.");
-    }
+    Console.WriteLine();
 
-    var tempDir = Path.Combine(Path.GetTempPath(), $"futureburn-dvdv-{Guid.NewGuid():N}");
-    Directory.CreateDirectory(tempDir);
-    var tempMpg = Path.Combine(tempDir, "title.mpg");
-
+    // Author — the pipeline does transcode + spumux + dvdauthor.
+    Futureburn.Core.Authoring.MkvDvdPipeline.AuthorResult result;
     try
     {
-        // --- Step 1: transcode video + every audio track to one MPEG-PS.
-        Console.WriteLine();
-        Console.WriteLine($"Transcoding via ffmpeg ({ffmpeg.VersionLine}) ...");
-        var ffargs = new List<string> { "-y", "-i", input, "-map", "0:v:0" };
-        for (int i = 0; i < audioStreams.Count; i++) { ffargs.Add("-map"); ffargs.Add($"0:a:{i}"); }
-        ffargs.Add("-target"); ffargs.Add(isPal ? "pal-dvd" : "ntsc-dvd");
-        ffargs.Add("-aspect"); ffargs.Add(aspect);
-        // Cap near DVD-5 capacity; dvdauthor splits this into 1 GB VOBs itself.
-        ffargs.Add("-fs"); ffargs.Add("4290000000");
-        ffargs.Add(tempMpg);
-
-        var rr = ffmpeg.Run(ffargs, line =>
-        {
-            if (line.StartsWith("frame=") || line.Contains("rror"))
-                Console.WriteLine($"  {line}");
-        });
-        if (rr.ExitCode != 0 || !File.Exists(tempMpg))
-        {
-            Console.Error.WriteLine();
-            Console.Error.WriteLine($"ffmpeg failed (exit {rr.ExitCode}). Last lines of log:");
-            foreach (var l in rr.CombinedLog.Split('\n').TakeLast(8)) Console.Error.WriteLine($"  {l}");
-            return 1;
-        }
-        Console.WriteLine($"  transcoded: {FormatBytes(new FileInfo(tempMpg).Length)}");
-
-        // --- Step 2: mux text subtitles into the MPEG-PS with spumux.
-        // Each spumux pass rewrites the whole stream, so they chain.
-        string authoredMpg = tempMpg;
-        var subLangs = new List<string>();
-        if (textSubs.Count > 0 && useDvdauthor)
-        {
-            var spumux = Futureburn.Core.Tools.SpumuxRunner.Locate();
-            if (spumux is null)
+        int lastPct = -10;
+        result = Futureburn.Core.Authoring.MkvDvdPipeline.Author(
+            new Futureburn.Core.Authoring.MkvDvdPipeline.Options(
+                input, outFolder, isPal, label, skeletonOnly),
+            onLog: line =>
             {
-                Console.WriteLine("  ⚠ spumux not found — subtitles skipped. (DVDStyler bundles it.)");
-            }
-            else
+                // Skip the ffmpeg per-frame + dvdauthor per-VOBU spam.
+                if (!line.StartsWith("frame=") && !line.StartsWith("STAT:"))
+                    Console.WriteLine($"  {line}");
+            },
+            onProgress: frac =>
             {
-                Console.WriteLine();
-                Console.WriteLine($"Muxing {textSubs.Count} subtitle track(s) via spumux ...");
-                for (int i = 0; i < textSubs.Count; i++)
-                {
-                    var (subIdx, stream) = textSubs[i];
-                    var lang = stream.Language ?? "und";
-                    var srt  = Path.Combine(tempDir, $"sub{i}.srt");
-                    var ex = ffmpeg.Run(new[] { "-y", "-i", input, "-map", $"0:s:{subIdx}", "-c:s", "srt", srt });
-                    if (ex.ExitCode != 0 || !File.Exists(srt))
-                    {
-                        Console.WriteLine($"  ⚠ subtitle {i} ({lang}) — couldn't extract, skipped.");
-                        continue;
-                    }
-                    var xml     = Path.Combine(tempDir, $"sub{i}.xml");
-                    File.WriteAllText(xml, Futureburn.Core.Tools.SpumuxRunner.BuildTextSubtitleXml(srt, isPal));
-                    var nextMpg = Path.Combine(tempDir, $"title-s{i}.mpg");
-                    try
-                    {
-                        spumux.Mux(authoredMpg, nextMpg, xml, subLangs.Count, isPal);
-                        if (authoredMpg != tempMpg) { try { File.Delete(authoredMpg); } catch { } }
-                        authoredMpg = nextMpg;
-                        subLangs.Add(Futureburn.Core.Tools.IsoLanguage.To2Letter(stream.Language));
-                        Console.WriteLine($"  subtitle {i} ({lang}) → subpicture stream {subLangs.Count - 1}");
-                    }
-                    catch (Exception sx)
-                    {
-                        Console.WriteLine($"  ⚠ subtitle {i} ({lang}) — spumux failed ({sx.Message}), skipped.");
-                    }
-                }
-            }
-        }
-
-        // --- Step 3: author the DVD-Video folder.
-        if (useDvdauthor)
-        {
-            Console.WriteLine();
-            Console.WriteLine($"Authoring via dvdauthor ({dvdauthor!.VersionLine}) ...");
-            var spec = new Futureburn.Core.Tools.DvdauthorRunner.DvdTitleSpec(
-                MpegFile:        authoredMpg,
-                IsPal:           isPal,
-                AspectRatio:     aspect,
-                ChapterStarts:   chapterStarts,
-                AudioLangs:      audioStreams
-                    .Select(a => Futureburn.Core.Tools.IsoLanguage.To2Letter(a.Language)).ToList(),
-                SubpictureLangs: subLangs);
-            try { dvdauthor.Author(spec, outFolder, line => Console.WriteLine($"  {line}")); }
-            catch (Exception ex)
-            {
-                Console.Error.WriteLine();
-                Console.Error.WriteLine($"dvdauthor failed: {ex.Message}");
-                return 1;
-            }
-        }
-        else
-        {
-            // Skeleton mode — copy the MPG into place, write skeleton IFOs.
-            var videoTs = Path.Combine(outFolder, "VIDEO_TS");
-            var audioTs = Path.Combine(outFolder, "AUDIO_TS");
-            Directory.CreateDirectory(videoTs);
-            Directory.CreateDirectory(audioTs);
-            File.Copy(authoredMpg, Path.Combine(videoTs, "VTS_01_1.VOB"), overwrite: true);
-
-            var vmg    = Futureburn.Core.Authoring.DvdIfoBuilder.BuildVmgIfo(numTitleSets: 1, providerId: label);
-            var vtsIfo = Futureburn.Core.Authoring.DvdIfoBuilder.BuildVtsIfo();
-            File.WriteAllBytes(Path.Combine(videoTs, "VIDEO_TS.IFO"), vmg);
-            File.WriteAllBytes(Path.Combine(videoTs, "VIDEO_TS.BUP"), vmg);
-            File.WriteAllBytes(Path.Combine(videoTs, "VTS_01_0.IFO"), vtsIfo);
-            File.WriteAllBytes(Path.Combine(videoTs, "VTS_01_0.BUP"), vtsIfo);
-        }
+                int pct = (int)(frac * 100);
+                if (pct >= lastPct + 10) { Console.WriteLine($"     ... {pct}%"); lastPct = pct; }
+            });
     }
-    finally
+    catch (Exception ex)
     {
-        try { Directory.Delete(tempDir, recursive: true); } catch { }
+        Console.Error.WriteLine();
+        Console.Error.WriteLine($"Authoring failed: {ex.Message}");
+        return 1;
     }
-
-    // DVD-Video spec wants an AUDIO_TS folder present even on a pure video
-    // disc; dvdauthor doesn't create it, so do it ourselves.
-    Directory.CreateDirectory(Path.Combine(outFolder, "AUDIO_TS"));
 
     // Summarize the authored folder.
     Console.WriteLine();
@@ -1482,14 +1352,16 @@ static int DvdVideoAuthorCommand(string[] args)
         foreach (var fi in new DirectoryInfo(videoTsDir).GetFiles().OrderBy(f => f.Name))
             Console.WriteLine($"  VIDEO_TS\\{fi.Name,-16} {FormatBytes(fi.Length)}");
     Console.WriteLine("  AUDIO_TS\\          (empty — normal for DVD-Video)");
-
-    if (!useDvdauthor)
+    Console.WriteLine($"  {result.AudioTracks} audio track(s), {result.SubtitlesMuxed} subtitle(s), " +
+                      $"{result.Chapters} chapter(s), {result.Aspect}");
+    if (!result.UsedDvdauthor)
     {
         Console.WriteLine();
         Console.WriteLine("⚠ Skeleton-IFO mode — VLC plays it, standalone players probably won't.");
+        Console.WriteLine("  Install DVDStyler (winget install AlexThuering.DVDStyler) for real IFOs.");
     }
 
-    // --- Step 4: burn, if asked.
+    // Burn, if asked.
     if (burnTarget is not null)
     {
         Console.WriteLine();
@@ -1501,23 +1373,6 @@ static int DvdVideoAuthorCommand(string[] args)
     Console.WriteLine($"  futureburn dvdv-author \"{input}\" \"{outFolder}\" --burn <drive>   (one-shot)");
     Console.WriteLine($"  futureburn burn-folder  \"{outFolder}\" <drive>                   (folder is ready now)");
     return 0;
-}
-
-// Subtitle codecs ffmpeg can re-emit as SRT text (so spumux can render them).
-// Bitmap subtitle codecs (VobSub, PGS) can't and are skipped for now.
-static bool IsTextSubtitle(string codecName) => codecName.ToLowerInvariant() switch
-{
-    "dvd_subtitle" or "hdmv_pgs_subtitle" or "dvdsub" or "pgssub"
-        or "xsub" or "dvb_subtitle" => false,
-    _ => true,
-};
-
-// Pick a DVD display aspect from the source video's pixel dimensions.
-static string GuessAspect(Futureburn.Core.Ffmpeg.FfprobeRunner.StreamInfo video)
-{
-    if (video.Width is { } w and > 0 && video.Height is { } h and > 0)
-        return (double)w / h > 1.5 ? "16:9" : "4:3";
-    return "4:3";
 }
 
 // Build a UDF image of an authored DVD-Video folder and burn it to a disc.

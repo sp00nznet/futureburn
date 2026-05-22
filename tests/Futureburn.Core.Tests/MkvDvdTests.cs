@@ -1,4 +1,6 @@
 using System.Runtime.Versioning;
+using Futureburn.Core.Authoring;
+using Futureburn.Core.Ffmpeg;
 using Futureburn.Core.Tools;
 
 namespace Futureburn.Core.Tests;
@@ -157,4 +159,47 @@ public class MkvDvdTests
         Assert.Contains("movie-height=\"576\"", SpumuxRunner.BuildTextSubtitleXml("s.srt", isPal: true));
         Assert.Contains("movie-width=\"720\"",  SpumuxRunner.BuildTextSubtitleXml("s.srt", isPal: false));
     }
+
+    // ---- MkvDvdPipeline helpers -------------------------------------------
+
+    [Theory]
+    [InlineData("subrip", true)]
+    [InlineData("ass", true)]
+    [InlineData("mov_text", true)]
+    [InlineData("webvtt", true)]
+    [InlineData("dvd_subtitle", false)]
+    [InlineData("hdmv_pgs_subtitle", false)]
+    [InlineData("dvb_subtitle", false)]
+    public void IsTextSubtitle_ClassifiesCodecs(string codec, bool expectedText)
+        => Assert.Equal(expectedText, MkvDvdPipeline.IsTextSubtitle(codec));
+
+    // GuessAspect is a storage-dimensions heuristic: ratio > 1.5 → 16:9.
+    [Theory]
+    [InlineData(1920, 1080, "16:9")]   // 1.78
+    [InlineData(1280, 720,  "16:9")]   // 1.78
+    [InlineData(1440, 1080, "4:3")]    // 1.33 storage — anamorphic DAR isn't inspected
+    [InlineData(720,  480,  "4:3")]    // exactly 1.5 → not wide
+    [InlineData(640,  480,  "4:3")]
+    [InlineData(0,    0,    "4:3")]    // unknown dimensions → safe default
+    public void GuessAspect_PicksFromDimensions(int w, int h, string expected)
+    {
+        var video = new FfprobeRunner.StreamInfo(
+            Index: 0, CodecType: "video", CodecName: "h264", CodecLongName: "",
+            SampleRate: null, Channels: null, BitRate: null, BitsPerRawSample: null,
+            Duration: null, Width: w, Height: h, Language: null);
+        Assert.Equal(expected, MkvDvdPipeline.GuessAspect(video));
+    }
+
+    [Fact]
+    public void ParseFfmpegTime_ExtractsElapsedFromProgressLine()
+    {
+        var t = MkvDvdPipeline.ParseFfmpegTime(
+            "frame= 1242 fps=805 q=2.0 size=24832KiB time=01:02:03.50 bitrate=4912.7kbits/s");
+        Assert.NotNull(t);
+        Assert.Equal(new TimeSpan(0, 1, 2, 3, 500), t!.Value);
+    }
+
+    [Fact]
+    public void ParseFfmpegTime_ReturnsNullWhenNoTimeField()
+        => Assert.Null(MkvDvdPipeline.ParseFfmpegTime("Press [q] to stop, [?] for help"));
 }

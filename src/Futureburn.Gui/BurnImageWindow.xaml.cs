@@ -1,6 +1,7 @@
 using System.IO;
 using System.Windows;
 using System.Windows.Input;
+using Futureburn.Core.Authoring;
 using Futureburn.Core.Fs;
 using Futureburn.Core.Imapi;
 using Futureburn.Core.Spti;
@@ -122,6 +123,87 @@ public partial class BurnImageWindow : Window
                 MessageBoxButton.OK, MessageBoxImage.Error);
             StatusText.Text = "ISO build failed.";
             Progress.Value = 0;
+        }
+    }
+
+    private async void ChooseVideo_Click(object sender, RoutedEventArgs e)
+    {
+        var dlg = new Microsoft.Win32.OpenFileDialog
+        {
+            Filter = "Video files|*.mkv;*.mp4;*.avi;*.m4v;*.mov;*.webm;*.wmv;*.ts;*.m2ts|All files|*.*",
+            Title  = "Choose a video to author + burn as a DVD-Video",
+        };
+        if (dlg.ShowDialog(this) != true) return;
+
+        var video          = dlg.FileName;
+        var label          = Path.GetFileNameWithoutExtension(video);
+        var authoredFolder = Path.Combine(Path.GetTempPath(), $"futureburn-dvdv-{Guid.NewGuid():N}");
+        var tempIso        = Path.Combine(Path.GetTempPath(), $"futureburn-build-{Guid.NewGuid():N}.iso");
+
+        // Reuse the burn-busy gate so Burn stays disabled while we transcode.
+        _burning = true;
+        UpdateBurnEnabled();
+        Progress.Value = 0;
+        Progress.IsIndeterminate = true;
+        StatusText.Text = "Authoring DVD-Video — transcoding, this can take a while ...";
+
+        try
+        {
+            var built = await Task.Run(() =>
+            {
+                // 1. Author: transcode + subtitles + IFOs → a DVD-Video folder.
+                MkvDvdPipeline.Author(
+                    new MkvDvdPipeline.Options(video, authoredFolder, IsPal: false, Label: label),
+                    onLog: line => Dispatcher.Invoke(() =>
+                        StatusText.Text = line.Length > 100 ? line.Substring(0, 100) : line),
+                    onProgress: frac => Dispatcher.Invoke(() =>
+                    {
+                        Progress.IsIndeterminate = false;
+                        Progress.Value = frac * 100;
+                    }));
+
+                // 2. Build the burnable UDF image from that folder.
+                Dispatcher.Invoke(() =>
+                {
+                    StatusText.Text = "Building the DVD UDF image ...";
+                    Progress.IsIndeterminate = false;
+                    Progress.Value = 0;
+                });
+                return FsImageBuilder.Build(authoredFolder, tempIso, label,
+                    onProgress: (copied, total) => Dispatcher.Invoke(() =>
+                        Progress.Value = total > 0 ? copied * 100.0 / total : 0));
+            });
+
+            // The authored folder was only scaffolding for the ISO — drop it.
+            try { Directory.Delete(authoredFolder, recursive: true); } catch { }
+
+            CleanupTempIso();
+            _isoPath      = tempIso;
+            _tempBuiltIso = tempIso;
+            _isoBytes     = built.TotalBytes;
+
+            IsoPathText.Text = $"{video}  →  DVD-Video";
+            IsoSizeText.Text = $"{FormatBytes(_isoBytes)} ({_isoBytes / 2048L:N0} sectors)";
+            StatusText.Text  = $"DVD-Video ready ({FormatBytes(_isoBytes)}). Pick a drive and Burn.";
+            Progress.Value   = 100;
+
+            UpdateDiscFitText();
+            UpdateDriveDiscText();
+        }
+        catch (Exception ex)
+        {
+            try { Directory.Delete(authoredFolder, recursive: true); } catch { }
+            try { File.Delete(tempIso); } catch { }
+            MessageBox.Show(this, ex.Message, "DVD-Video authoring failed",
+                MessageBoxButton.OK, MessageBoxImage.Error);
+            StatusText.Text = "DVD-Video authoring failed.";
+            Progress.Value = 0;
+        }
+        finally
+        {
+            _burning = false;
+            Progress.IsIndeterminate = false;
+            UpdateBurnEnabled();
         }
     }
 
