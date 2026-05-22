@@ -10,39 +10,42 @@ A passion project that grew teeth.
 
 ## What works today
 
-- ✅ **Burning a real Red Book audio CD from raw SCSI MMC commands** — confirmed on a 2008-vintage USB writer that two of the three IMAPI paths refused to use. Verified the disc plays in third-party players.
-- ✅ **Multi-track audio CD burning** — full 19-track / 1-hour album burn end-to-end via raw SPTI, verified playable in foobar2000 with random-track seeks. Took six CD-Rs of debugging to crack: the trailing-partial-chunk WRITE 12 was sending mismatched `DataTransferLength` vs CDB byte count, triggering USB-BOT recovery resets that surfaced as sense `0x29` UNIT ATTENTION mid-track-2. Fix: pad each track's final chunk to the chunk-size boundary with zero PCM (silence), exactly the way cdrtools and libburn do it. Adds <100 ms of inaudible silence at track ends.
-- ✅ Multi-format input: **WAV, MP3, M4A, AAC, WMA, FLAC** (anything Windows Media Foundation handles)
-- ✅ **M3U / M3U8** playlists, simple and extended (`#EXTM3U` + `#EXTINF:`)
-- ✅ Three burn engines: modern IMAPI v2, legacy IMAPI v1, and **raw SPTI/SCSI** (the path ImgBurn uses)
-- ✅ Full disc inspection: drive capabilities, supported profiles + feature pages, current media type, finalization status, complete TOC with per-track type and duration
-- ✅ A four-tile WPF GUI shell, **CD Info** tile is fully wired
-- ✅ `--dry-run`, `--speed Nx`, `--force`, `--yes`, `--keep-temp` flags
-- ✅ Salvage operation for partial burns (`finalize <drive>`)
-- ✅ **ISO image burning to CD-R or DVD-R/+R/-RW/+RW** via raw SCSI (`burn-iso` CLI + Burn Blu-ray / DVD GUI tile)
-- ✅ **Folder → ISO**: build an ISO 9660 + Joliet + UDF disc image from any folder (`mkiso`) or do it and burn in one step (`burn-folder`). GUI tile has a **Choose folder...** button that builds the ISO in the background.
-- ✅ **BIN/CUE burning** (data-mode, MODE1/2048 + MODE1/2352). Hand `burn-iso` a `.cue` and we parse it, find the `.bin`, and burn the user-data portion as 2048-byte sectors.
-- ✅ **MusicBrainz disc lookup** (`cd-lookup <drive>`) — compute the canonical MusicBrainz disc ID from the disc's TOC and query the public API for releases. Returns artist + album + full track listing for any audio CD that's in the database — and when there's no exact disc-ID match (true of most home-burned and older discs) it falls back to a **fuzzy TOC search** that matches releases by approximate track layout.
-- ✅ **Disc-folder validator** (`validate-folder <folder>`) — given a folder, identify whether it's a valid DVD-Video, DVD-Audio, VCD, SVCD, Blu-ray Movie, or plain data structure. Flags missing required files (VIDEO_TS.BUP missing, no AVSEQ*.DAT, etc.) before you waste a disc burning a malformed structure. Same logic powers the `cd-info` disc-type label.
-- ✅ **ffmpeg detection** (`ffmpeg`) — locate ffmpeg on the system. Foundation for future video-disc authoring (DVD-Video, VCD, SVCD).
-- ✅ **ffprobe-enriched audio info** — when ffmpeg is installed, `probe <file>` now also shows container, codec, bitrate, file size, and embedded tags (creation date, encoder, etc.) on top of the basic NAudio readout.
-- ✅ **VCD authoring (experimental)** — `vcd-author <input> <out>` takes a video file, runs ffmpeg's `pal-vcd` / `ntsc-vcd` target preset to produce MPEG-1 + MP2 in MPEG-PS, and writes the binary `INFO.VCD` + `ENTRIES.VCD` files for the standard VCD folder structure. Software players (VLC, MPC-HC) play the result; strict standalone VCD players may reject it because we burn single-track data CDs (real VCDs are multi-track — separate future project).
-- ✅ **DVD-Video authoring** — `dvdv-author <input> <out>` runs ffmpeg's `ntsc-dvd` / `pal-dvd` preset, then automatically delegates IFO authoring to `dvdauthor` when it's installed (proper navigation tables → hardware-playable discs). Falls back to skeleton IFOs (VLC-only) when dvdauthor isn't on the system. Run `futureburn dvdauthor` to check / get install instructions.
-- ✅ **MKV → DVD-Video pipeline** — point `dvdv-author` at an MKV (or MP4, AVI, ...) and it carries the whole structure through to a hardware-playable DVD: **chapter markers** become real chapter stops, **every audio track** comes along with its language label, and **subtitles** ride along too — text subtitles rendered via `spumux`, bitmap subtitles (VobSub / PGS) re-encoded to DVD subpicture format. Add `--burn <drive>` and it transcodes, authors, builds the UDF image, and burns the disc — the entire MKV-to-disc run in one command. (DVDStyler bundles the `dvdauthor` + `spumux` it needs: `winget install AlexThuering.DVDStyler`.)
-- ✅ **DVD menus** — `dvdv-author --menu` (or the "DVD menu" checkbox on the Burn Blu-ray / DVD tile) authors a navigable disc instead of one that auto-plays: a root menu with **Play Movie** / **Scene Selection**, and a scene menu with one button per chapter. futureburn renders the menu art, builds the button-highlight subpictures, and wires the remote navigation — and auto-generates chapter marks when the source rip has none.
-- ✅ **DVD-Audio authoring** — `dvda-author <playlist-or-folder> <out>` decodes each track to LPCM WAV (16/44.1) and delegates to the external `dvda-author` tool (Sourceforge), which produces real spec-compliant `AUDIO_TS\` IFO/BUP/AOB files. Run `futureburn dvda-author-info` to check install. Note: PS4 and most modern players can't read DVD-Audio — playback needs a DVD-A-aware player (some early-2000s premium car audio systems and home-theater receivers do support it).
-- ✅ **Audio CD GUI workflow polish** — drag-and-drop reorder of tracks, right-click / F2 / double-click to rename a track, ▶ Play / ■ Stop preview buttons backed by NAudio.
-- ✅ True gapless DAO via SPTI cue sheet (experimental — `--gapless` flag; first hardware test pending)
-- ✅ **CD-Text writing** (experimental) — `burn <playlist> <drive> --engine spti --cdtext --album "..." --artist "..."` encodes artist + album + per-track titles into the disc lead-in, so car stereos show "Whatever You Want" instead of "Track 16". Complete pack encoder — 18-byte packs, the CCITT CRC-16, the mandatory `0x8F` size-info packs — plus the libburn-style lead-in transport, wired into the SAO burn. `cdtext-dump <playlist>` prints the exact packs **offline** so you can eyeball them. CD-Text lives in the SAO lead-in, so it needs a writer that supports DAO/SAO cue-sheet recording — the test-bench LG GE20LU10 turns out **not** to (it rejects SEND CUE SHEET outright; `cuesheet-probe <drive>` will tell you if yours does). Encoder verified offline; the burn path awaits an SAO-capable drive.
-- ✅ **LightScribe label burning** — `lightscribe-info` enumerates LightScribe-capable drives; `lightscribe-print <drive> <image>` converts any PNG/JPG/BMP into a 24-bit center-fit BMP and submits it to the LSS Public SDK (`LSPrintAPI.dll`). First real label burn confirmed: Van Gogh's *Enclosed Wheat Field* etched onto a CD-R top in ~16 min at best quality on the GE20LU10. The white whale, done. (Currently uses LSS's user-driven dialog so you click "Print" in the LSS UI; full programmatic submission is held up on a boost::program_options drive-identifier mystery — to be revisited.)
-- ✅ **GUI tile for LightScribe** — drag in an image, pick a drive + quality, click Burn. Mirror image of the audio-CD tile workflow.
-- ✅ **One-shot labeled audio CD**: `futureburn burn mix.m3u8 F: --image cover.png` — does the audio side first, auto-ejects, walks you through flipping the disc (with a sanity check that you've actually flipped it), then LightScribes the label. The original goal-stack collapsed into one command.
+**Audio CDs**
+- Burn Red Book audio CDs — single- or multi-track, verified playable in real players.
+- Input from WAV, MP3, M4A, AAC, WMA, FLAC, and M3U / M3U8 playlists.
+- Three burn engines — IMAPI v2, IMAPI v1, raw SPTI/SCSI — so you can use whatever your drive likes.
 
-## What's coming
+**Data & ISO discs**
+- Burn ISO images to CD-R / DVD±R / DVD±RW.
+- Build an ISO 9660 + Joliet + UDF image from any folder, then burn it — in one step or two.
+- Burn BIN/CUE data discs.
 
-- ⬜ Headless LightScribe submission (works today through the LSS user dialog with one click; full programmatic submission is blocked on undocumented LSS internals — see the project memory for the dead-end map)
-- ⬜ Blu-ray burning (when the test hardware arrives)
-- ⬜ Mac/Linux ports — long after Windows is rock solid
+**Video discs**
+- Author hardware-playable **DVD-Video** from any video file — point it at an MKV and it carries chapters, every audio track, and subtitles through to a burned disc.
+- **DVD menus** — root menu with Play / Scene Selection, plus a per-chapter scene menu.
+- **DVD-Audio** authoring, and experimental Video CD authoring.
+
+**Disc labels**
+- **LightScribe** label burning — etch artwork onto the top side of the disc.
+- One-shot labeled audio CD — burn the music *and* the label with a single command.
+
+**Inspection & repair**
+- Full drive + disc inspection — capabilities, media type, finalization status, complete TOC.
+- **MusicBrainz** disc lookup, with a fuzzy TOC fallback for home-burned and older discs.
+- Disc-folder validator — recognises DVD-Video, DVD-Audio, VCD, SVCD, Blu-ray, or plain data.
+- Salvage partially-burned discs (`finalize`).
+
+**Two ways to drive it**
+- A full command-line tool, and a four-tile WPF GUI (every tile is wired and working).
+
+See **[docs/](docs/)** for how each of these works under the hood.
+
+## Coming later
+
+- **CD-Text and true gapless DAO** — the encoder is complete and correct, but writing either one needs a drive that supports SAO cue-sheet recording. The test-bench LG GE20LU10 doesn't, so the burn path is built but awaits SAO-capable hardware. (`cuesheet-probe <drive>` tells you whether yours qualifies.)
+- **Headless LightScribe submission** — works today via the LSS one-click dialog; fully programmatic submission is blocked on undocumented LSS internals.
+- **Blu-ray burning** — when the test hardware arrives.
+- **Mac/Linux ports** — long after Windows is rock solid.
 
 ---
 
@@ -60,7 +63,7 @@ The four-tile main window — pick what you want to do:
 
 ![Burn Blu-ray / DVD window](docs/screenshots/burn-dvd.png)
 
-**CD Info** — every optical drive and the disc in it: capabilities, what's loaded, a one-line suggested action (blank → ready to burn, finalized → ready to rip, ...), finalization status, and the complete TOC with per-track type and duration. Same data the CLI's `cd-info` command surfaces, just clickable:
+**CD Info** — every optical drive and the disc in it: capabilities, what's loaded, a one-line suggested action (blank → ready to burn, finalized → ready to rip, ...), finalization status, and the complete TOC with per-track type and duration:
 
 ![CD Info window](docs/screenshots/cd-info.png)
 
@@ -97,14 +100,12 @@ futureburn spti-info F        # does raw SCSI pass-through work on F:?
 
 ## Stack
 
-- **Language:** C# (.NET 8)
-- **GUI:** WPF
+- **Language:** C# (.NET 8), **GUI:** WPF
 - **Audio:** [NAudio](https://github.com/naudio/NAudio) (MIT) for decoding + resampling
-- **Burning:**
-  - IMAPI v2 + v1 via hand-rolled `[ComImport]` interfaces (no NuGet wrappers)
-  - SPTI via direct P/Invoke and SCSI MMC opcodes
+- **Burning:** IMAPI v2 + v1 via hand-rolled `[ComImport]` interfaces (no NuGet wrappers); SPTI via direct P/Invoke and SCSI MMC opcodes
+- **External tools (optional, for video discs):** `ffmpeg`, `dvdauthor`, `spumux`, `dvda-author`
 - **Target OS:** Windows 11 (Win10 likely works, not a goal)
-- **Third-party packages:** NAudio. That's it. No installer, no telemetry SDK, no analytics package.
+- **Third-party NuGet packages:** NAudio. That's it. No installer, no telemetry SDK, no analytics package.
 
 ---
 
@@ -112,40 +113,29 @@ futureburn spti-info F        # does raw SCSI pass-through work on F:?
 
 ```powershell
 # Drives + capabilities
-dotnet run --project src/Futureburn.Cli -- drives
 dotnet run --project src/Futureburn.Cli -- drives -v
 
 # Disc inspection
-dotnet run --project src/Futureburn.Cli -- disc F:
 dotnet run --project src/Futureburn.Cli -- cd-info F
 
-# Audio probing / decoding
-dotnet run --project src/Futureburn.Cli -- probe song.mp3
-dotnet run --project src/Futureburn.Cli -- decode song.mp3 song-cd.wav
-dotnet run --project src/Futureburn.Cli -- playlist mix.m3u8
-
-# Burning
-dotnet run --project src/Futureburn.Cli -- burn mix.m3u8 F: --dry-run
+# Burn an audio CD
 dotnet run --project src/Futureburn.Cli -- burn mix.m3u8 F: --engine spti --speed 16x
 
-# Burn an ISO image to a blank CD-R or DVD-R
-dotnet run --project src/Futureburn.Cli -- burn-iso ubuntu.iso F: --dry-run
-dotnet run --project src/Futureburn.Cli -- burn-iso my-disc.iso F: --speed 8x --yes
+# Burn an ISO, or build+burn an ISO from a folder
+dotnet run --project src/Futureburn.Cli -- burn-iso ubuntu.iso F: --yes
+dotnet run --project src/Futureburn.Cli -- burn-folder "C:\my-files" F: --label MYDISC
 
-# Build an ISO from a folder (ISO 9660 + Joliet + UDF; max compatibility)
-dotnet run --project src/Futureburn.Cli -- mkiso "C:\my-files" out.iso --label MYDISC
+# Author a DVD-Video from an MKV and burn it in one go
+dotnet run --project src/Futureburn.Cli -- dvdv-author movie.mkv .\out --menu --burn F:
 
-# Build + burn in one step
-dotnet run --project src/Futureburn.Cli -- burn-folder "C:\my-files" F: --label MYDISC --speed 8x
-
-# Salvage a partially-burned disc
-dotnet run --project src/Futureburn.Cli -- finalize F
+# LightScribe a label
+dotnet run --project src/Futureburn.Cli -- lightscribe-print F .\cover.png
 
 # GUI
 dotnet run --project src/Futureburn.Gui
 ```
 
-The GUI opens to a four-tile main window. **CD Info** is the live tile and shows real-time disc state, capabilities, and full TOC with track-by-track listings. The other three tiles are placeholders for now.
+Run `futureburn` with no arguments for the full command list. The GUI opens to a four-tile main window — Burn Audio CD, Burn Blu-ray / DVD, CD Info, and Burn Label (LightScribe) — all four are live.
 
 ---
 
@@ -154,16 +144,24 @@ The GUI opens to a four-tile main window. **CD Info** is the live tile and shows
 ```
 futureburn/
 ├── Futureburn.sln
-├── Directory.Build.props        # one place to bump version, set framework, etc.
+├── Directory.Build.props            # one place to bump version, set framework, etc.
 ├── CHANGELOG.md
-├── LICENSE                       # MIT
+├── docs/                            # how-it-works documentation
+├── LICENSE                          # MIT
 └── src/
     ├── Futureburn.Core/
-    │   ├── Imapi/                # IMAPI v2 + v1 typed COM, drive enum, disc inspection
-    │   ├── Audio/                # NAudio wrappers, M3U parser, CdFormat constants
-    │   └── Spti/                 # SCSI Pass-Through: native interop, MMC opcodes, burn engine
-    ├── Futureburn.Cli/           # all the commands above
-    └── Futureburn.Gui/           # WPF — MainWindow + CdInfoWindow + PlaceholderWindow
+    │   ├── Imapi/                   # IMAPI v2 + v1 typed COM, drive enum, disc inspection
+    │   ├── Spti/                    # SCSI pass-through: interop, MMC opcodes, burn engines, CD-Text
+    │   ├── Audio/                   # NAudio wrappers, M3U parser, CD format constants
+    │   ├── Fs/                      # ISO 9660 / Joliet / UDF image building, disc-folder validator
+    │   ├── Image/                   # BIN/CUE parsing and image streams
+    │   ├── Authoring/               # DVD-Video / DVD-Audio / VCD authoring, IFOs, menus
+    │   ├── Ffmpeg/                  # ffmpeg / ffprobe detection and invocation
+    │   ├── Tools/                   # external-tool locators + runners (dvdauthor, spumux, ...)
+    │   ├── LightScribe/             # LSPrintAPI interop, label-image conversion
+    │   └── Net/                     # MusicBrainz client
+    ├── Futureburn.Cli/              # all the commands
+    └── Futureburn.Gui/              # WPF — main window + four feature windows
 ```
 
 ---
