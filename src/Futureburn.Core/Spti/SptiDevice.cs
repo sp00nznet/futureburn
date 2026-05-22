@@ -329,7 +329,15 @@ public sealed class SptiDevice : IDisposable
                                 // the disc with a medium ECC error mid-write. Every
                                 // modern burning tool enables this; it was an
                                 // embarrassing oversight in our earlier attempts.
-        p[o + 3]  = 0xC0;       // Multisession = 11 (final session), FP=0, Copy=0, TrackMode=0 (Audio CD-DA)
+        // Multi-session field (bits 7-6): 00 = no next session, FINALIZE the
+        // disc; 11 = next session allowed, leave it APPENDABLE. We had 0xC0
+        // (11) here with a comment claiming it meant "final session" — exactly
+        // backwards. That's why multi-track audio CDs came out playable but
+        // READ DISC INFORMATION reported Incomplete/appendable, never Finalized.
+        // 0x00 = Multi-session 00 + FP=0, Copy=0, TrackMode=0 (Audio CD-DA).
+        // Verified against the MMC-5 Write Parameters page and libburn's
+        // mmc_compose_mode_page_5 (multi==0 → top bits 00).
+        p[o + 3]  = 0x00;
         p[o + 4]  = 0x00;       // DataBlockType = 0 (raw 2352-byte sectors for CD-DA)
         p[o + 5]  = 0x00;       // LinkSize
         p[o + 6]  = 0x20;       // Initiator App Code = 0x20 (writer app)

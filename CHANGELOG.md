@@ -4,6 +4,13 @@ All notable changes to futureburn will land here. Format roughly follows [Keep a
 
 ## [Unreleased]
 
+## [0.0.52] — 2026-05-22
+
+### Fixed — multi-track audio CDs now finalize
+Multi-track audio CD-Rs played everywhere they were tested, but `READ DISC INFORMATION` reported them as Incomplete/appendable, never Finalized. Root cause: the Write Parameters mode page (0x05) set the Multi-session field to `11b` — "next session allowed, leave the disc appendable" — under a code comment that wrongly claimed `11b` meant "final session." It's the inverse; finalizing a CD-R needs `11b`'s opposite, `00b`. There is no separate CD "close disc" command — the Multi-session bits are what decide whether CLOSE SESSION finalizes or leaves the disc appendable. Fixed to `00b`, verified against the MMC-5 Write Parameters page and libburn's `mmc_compose_mode_page_5`.
+
+Hardware validation pending the next audio-CD burn — but it's a one-byte inverted-flag fix, cross-checked against libburn's source.
+
 ## [0.0.51] — 2026-05-22
 
 ### Changed — merged the Drives view into CD Info

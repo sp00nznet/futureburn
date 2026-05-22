@@ -40,7 +40,6 @@ A passion project that grew teeth.
 
 ## What's coming
 
-- ⬜ Strict-Finalized status flag for multi-track burns (disc plays everywhere we've tested, but `READ DISC INFO` reports `Incomplete` — likely needs a different MMC close-function value or a follow-up CLOSE function 6/7 sequence; cosmetic, not blocking playback)
 - ⬜ Headless LightScribe submission (works today through the LSS user dialog with one click; full programmatic submission is blocked on undocumented LSS internals — see the project memory for the dead-end map)
 - ⬜ Blu-ray burning (when the test hardware arrives)
 - ⬜ Mac/Linux ports — long after Windows is rock solid
