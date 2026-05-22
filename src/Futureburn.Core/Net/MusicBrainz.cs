@@ -87,6 +87,45 @@ public static class MusicBrainz
         return ParseResponse(discId, json);
     }
 
+    /// <summary>
+    /// Fuzzy MusicBrainz lookup by raw TOC, for discs whose exact disc ID isn't
+    /// in the database (very common — a burned disc's TOC rarely reproduces a
+    /// pressed CD's exactly). Uses the <c>discid/-?toc=</c> endpoint, which
+    /// exact-matches the TOC if it can and otherwise returns releases whose
+    /// track layout is close.
+    /// </summary>
+    /// <param name="trackStartLbas">LBA where each track begins, track order 1..N.</param>
+    /// <param name="leadOutLba">LBA where the lead-out begins.</param>
+    public static async Task<MbLookupResult> LookupByTocAsync(
+        IReadOnlyList<int> trackStartLbas,
+        int leadOutLba,
+        string userAgent,
+        CancellationToken ct = default)
+    {
+        if (trackStartLbas.Count == 0 || trackStartLbas.Count > 99)
+            throw new ArgumentException("Need 1-99 tracks");
+
+        // TOC parameter: firstTrack lastTrack leadOut(+150) track1(+150) ... trackN(+150).
+        var toc = new StringBuilder();
+        toc.Append("1 ").Append(trackStartLbas.Count).Append(' ').Append(leadOutLba + 150);
+        foreach (var lba in trackStartLbas)
+            toc.Append(' ').Append(lba + 150);
+
+        var url = "https://musicbrainz.org/ws/2/discid/-"
+                + $"?toc={Uri.EscapeDataString(toc.ToString())}"
+                + "&inc=artists+recordings&fmt=json";
+
+        using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
+        http.DefaultRequestHeaders.UserAgent.ParseAdd(userAgent);
+
+        using var response = await http.GetAsync(url, ct).ConfigureAwait(false);
+        if (response.StatusCode == HttpStatusCode.NotFound)
+            return new MbLookupResult("(fuzzy)", Array.Empty<MbRelease>());
+        response.EnsureSuccessStatusCode();
+        var json = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+        return ParseResponse("(fuzzy)", json);
+    }
+
     public static MbLookupResult ParseResponse(string discId, string json)
     {
         var doc = JsonDocument.Parse(json);

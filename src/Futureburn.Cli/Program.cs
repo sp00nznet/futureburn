@@ -2205,15 +2205,17 @@ static int CdLookup(string[] args)
     Console.WriteLine($"  Disc ID:    {discId}");
     Console.WriteLine($"  MB lookup:  https://musicbrainz.org/ws/2/discid/{discId}?inc=artists+recordings");
     Console.WriteLine();
+    var mbVersion = System.Reflection.Assembly.GetExecutingAssembly()
+        .GetCustomAttribute<System.Reflection.AssemblyInformationalVersionAttribute>()?.InformationalVersion
+        ?? "0.0.0";
+    var ua = $"futureburn/{mbVersion} ( https://github.com/sp00nznet/futureburn )";
+    bool fuzzy = false;
+
     Console.WriteLine("Querying MusicBrainz ...");
 
     Futureburn.Core.Net.MusicBrainz.MbLookupResult result;
     try
     {
-        var version = System.Reflection.Assembly.GetExecutingAssembly()
-            .GetCustomAttribute<System.Reflection.AssemblyInformationalVersionAttribute>()?.InformationalVersion
-            ?? "0.0.0";
-        var ua = $"futureburn/{version} ( https://github.com/sp00nznet/futureburn )";
         result = Futureburn.Core.Net.MusicBrainz.LookupAsync(discId, ua).GetAwaiter().GetResult();
     }
     catch (Exception ex)
@@ -2222,18 +2224,42 @@ static int CdLookup(string[] args)
         return 1;
     }
 
+    // No exact disc-ID match? Burned discs almost never reproduce a pressed
+    // CD's TOC exactly — fall back to MusicBrainz's fuzzy TOC search, which
+    // matches releases whose track layout is close.
+    if (!result.Found)
+    {
+        Console.WriteLine("  no exact disc-ID match — trying a fuzzy TOC search ...");
+        try
+        {
+            var startLbas = toc.Tracks.Select(t => t.StartLba).ToArray();
+            result = Futureburn.Core.Net.MusicBrainz
+                .LookupByTocAsync(startLbas, toc.LeadOutLba, ua).GetAwaiter().GetResult();
+            fuzzy = true;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Fuzzy lookup failed: {ex.Message}");
+            return 1;
+        }
+    }
+
     if (!result.Found)
     {
         Console.WriteLine();
-        Console.WriteLine("No matching release in MusicBrainz. The disc isn't in the database");
-        Console.WriteLine("(or the TOC differs from any known pressing of it).");
+        Console.WriteLine("No match in MusicBrainz — exact or fuzzy. The disc isn't in the database.");
         return 0;
     }
 
     Console.WriteLine();
-    Console.WriteLine($"Found {result.Releases.Count} release{(result.Releases.Count == 1 ? "" : "s")}:");
+    Console.WriteLine($"Found {result.Releases.Count} {(fuzzy ? "fuzzy-matched " : "")}" +
+                      $"release{(result.Releases.Count == 1 ? "" : "s")}:");
+    if (fuzzy)
+        Console.WriteLine("(fuzzy TOC match — track layout is close, not an exact disc-ID match)");
+    // A fuzzy search can return dozens of pressings — show the first handful.
+    int showCount = fuzzy ? Math.Min(result.Releases.Count, 6) : result.Releases.Count;
     int relIdx = 1;
-    foreach (var rel in result.Releases)
+    foreach (var rel in result.Releases.Take(showCount))
     {
         Console.WriteLine();
         Console.WriteLine($"  [{relIdx}] {rel.Artist}");
@@ -2252,6 +2278,12 @@ static int CdLookup(string[] args)
             }
         }
         relIdx++;
+    }
+    if (showCount < result.Releases.Count)
+    {
+        Console.WriteLine();
+        Console.WriteLine($"  ... and {result.Releases.Count - showCount} more pressing(s) — " +
+                          "open the MB ids above to see them all.");
     }
     return 0;
 }

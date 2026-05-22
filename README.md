@@ -22,7 +22,7 @@ A passion project that grew teeth.
 - ✅ **ISO image burning to CD-R or DVD-R/+R/-RW/+RW** via raw SCSI (`burn-iso` CLI + Burn Blu-ray / DVD GUI tile)
 - ✅ **Folder → ISO**: build an ISO 9660 + Joliet + UDF disc image from any folder (`mkiso`) or do it and burn in one step (`burn-folder`). GUI tile has a **Choose folder...** button that builds the ISO in the background.
 - ✅ **BIN/CUE burning** (data-mode, MODE1/2048 + MODE1/2352). Hand `burn-iso` a `.cue` and we parse it, find the `.bin`, and burn the user-data portion as 2048-byte sectors.
-- ✅ **MusicBrainz disc lookup** (`cd-lookup <drive>`) — compute the canonical MusicBrainz disc ID from the disc's TOC and query the public API for releases. Returns artist + album + full track listing for any audio CD that's in the database.
+- ✅ **MusicBrainz disc lookup** (`cd-lookup <drive>`) — compute the canonical MusicBrainz disc ID from the disc's TOC and query the public API for releases. Returns artist + album + full track listing for any audio CD that's in the database — and when there's no exact disc-ID match (true of most home-burned and older discs) it falls back to a **fuzzy TOC search** that matches releases by approximate track layout.
 - ✅ **Disc-folder validator** (`validate-folder <folder>`) — given a folder, identify whether it's a valid DVD-Video, DVD-Audio, VCD, SVCD, Blu-ray Movie, or plain data structure. Flags missing required files (VIDEO_TS.BUP missing, no AVSEQ*.DAT, etc.) before you waste a disc burning a malformed structure. Same logic powers the `cd-info` disc-type label.
 - ✅ **ffmpeg detection** (`ffmpeg`) — locate ffmpeg on the system. Foundation for future video-disc authoring (DVD-Video, VCD, SVCD).
 - ✅ **ffprobe-enriched audio info** — when ffmpeg is installed, `probe <file>` now also shows container, codec, bitrate, file size, and embedded tags (creation date, encoder, etc.) on top of the basic NAudio readout.
@@ -42,7 +42,6 @@ A passion project that grew teeth.
 
 - ⬜ Strict-Finalized status flag for multi-track burns (disc plays everywhere we've tested, but `READ DISC INFO` reports `Incomplete` — likely needs a different MMC close-function value or a follow-up CLOSE function 6/7 sequence; cosmetic, not blocking playback)
 - ⬜ Headless LightScribe submission (works today through the LSS user dialog with one click; full programmatic submission is blocked on undocumented LSS internals — see the project memory for the dead-end map)
-- ⬜ MusicBrainz round-trip on burned discs (extend `cd-lookup` to recognize the discs we author ourselves)
 - ⬜ "What's loaded?" drive-enumeration UI tile
 - ⬜ Blu-ray burning (when the test hardware arrives)
 - ⬜ Mac/Linux ports — long after Windows is rock solid

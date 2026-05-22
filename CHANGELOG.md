@@ -4,6 +4,13 @@ All notable changes to futureburn will land here. Format roughly follows [Keep a
 
 ## [Unreleased]
 
+## [0.0.49] — 2026-05-22
+
+### Added — fuzzy MusicBrainz lookup in cd-lookup
+`cd-lookup` now falls back to MusicBrainz's fuzzy TOC search when the exact disc-ID lookup misses. A burned disc almost never reproduces a pressed CD's TOC exactly, so the exact-ID lookup failed on most home-burned and many older discs; the `discid/-?toc=` endpoint matches releases whose track layout is *close* and identifies far more of them. Results are labelled as fuzzy matches and capped at the first few pressings (a fuzzy search can return dozens).
+
+Verified against the live MusicBrainz API: a 12-track TOC fuzzy-matched Nirvana's *Nevermind*, response parsed cleanly.
+
 ## [0.0.48] — 2026-05-22
 
 ### Added — bitmap subtitles in the MKV→DVD pipeline
