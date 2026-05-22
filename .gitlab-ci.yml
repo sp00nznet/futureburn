@@ -101,25 +101,43 @@ publish:gui:
     expire_in: 30 days
 
 # ── deploy ──────────────────────────────────────────────────────────────────
-# Drop both .exe artifacts onto /mnt/releases on the GitLab server (the same
-# share connectty publishes to). Laid out as <repo>/<ref>/ — so:
-#     /mnt/releases/futureburn/main/Futureburn.Cli.exe
-#     /mnt/releases/futureburn/main/Futureburn.Gui.exe
-# Every push to main updates the main/ slot in place; any future git tag would
-# land in its own subdir (e.g. /mnt/releases/futureburn/v0.0.55/).
+# Drop both .exe artifacts onto the `releases` SMB share on beta — laid out
+# as <project>/<ref>/, so:
+#     \\$SMB_HOST\releases\futureburn\main\Futureburn.Cli.exe
+#     \\$SMB_HOST\releases\futureburn\main\Futureburn.Gui.exe
+# Every push to main overwrites the main/ slot; future git tags land in their
+# own subdir (e.g. .../futureburn/v0.0.55/).
 #
-# The Windows side of that mount is exposed via SMB as \\192.168.100.23\releases.
+# Auth is the dedicated `gitlab-ci` SMB user, not the unix root account.
+# Four CI/CD variables drive this job (set them on the project or group —
+# see scripts/CI_SMB_USAGE.md in the buildforever repo):
+#     SMB_HOST       192.168.100.23
+#     SMB_SHARE      releases
+#     SMB_USER       gitlab-ci
+#     SMB_PASSWORD   (masked; rotated via setup_gitlab_ci_smb_user.py)
+#
+# New-PSDrive -Credential is used instead of `net use \\host\share <pw> /user:<u>`
+# so the password never sits on a process command line.
 deploy:windows:
   stage: deploy
   needs:
     - publish:cli
     - publish:gui
+  variables:
+    DEST_SUBDIR: '$CI_PROJECT_NAME/$CI_COMMIT_REF_SLUG'
   script:
-    - 'net use R: \\192.168.100.23\releases gitlab /user:root'
-    - 'New-Item -ItemType Directory -Force -Path "R:\$env:CI_PROJECT_NAME\$env:CI_COMMIT_REF_NAME"'
-    - 'Copy-Item -Force publish\cli\Futureburn.Cli.exe "R:\$env:CI_PROJECT_NAME\$env:CI_COMMIT_REF_NAME\"'
-    - 'Copy-Item -Force publish\gui\Futureburn.Gui.exe "R:\$env:CI_PROJECT_NAME\$env:CI_COMMIT_REF_NAME\"'
-    - 'net use R: /delete'
+    - |
+      $cred = New-Object System.Management.Automation.PSCredential(
+                "$env:SMB_USER",
+                (ConvertTo-SecureString "$env:SMB_PASSWORD" -AsPlainText -Force))
+      New-PSDrive -Name R -PSProvider FileSystem `
+                  -Root "\\$env:SMB_HOST\$env:SMB_SHARE" `
+                  -Credential $cred -ErrorAction Stop | Out-Null
+      $target = "R:\$env:DEST_SUBDIR"
+      New-Item -ItemType Directory -Force -Path $target | Out-Null
+      Copy-Item -Force .\publish\cli\Futureburn.Cli.exe "$target\"
+      Copy-Item -Force .\publish\gui\Futureburn.Gui.exe "$target\"
+      Remove-PSDrive -Name R
   rules:
     - if: $CI_COMMIT_TAG
     - if: $CI_PIPELINE_SOURCE == "web"
