@@ -1,0 +1,88 @@
+# ============================================================================
+#  futureburn — GitLab CI/CD  (buildforever.cloud)
+# ============================================================================
+#  futureburn is a Windows-only .NET 8 application — WPF, IMAPI COM interop, and
+#  the 32-bit LightScribe SDK. None of that builds on Linux, so every job here
+#  MUST run on a Windows runner. A Linux runner cannot compile this project.
+#
+#  ── One-time runner setup (on the GitLab server side) ──────────────────────
+#   1. A Windows 10/11 or Windows Server machine.
+#   2. Install the .NET 8 SDK and put it on PATH:
+#        winget install Microsoft.DotNet.SDK.8
+#   3. Install gitlab-runner, then register it with the shell executor:
+#        gitlab-runner register --url https://buildforever.cloud/ `
+#          --executor shell --shell pwsh
+#   4. Tag that runner `windows` (in the runner's settings on GitLab) so the
+#      jobs below land on it.
+#
+#  Until a runner with the `windows` tag exists, pipelines stay "pending" —
+#  that's expected, not a failure.
+# ============================================================================
+
+stages:
+  - build
+  - test
+  - publish
+
+variables:
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+  DOTNET_NOLOGO: "1"
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: "1"
+  # The two executables are x86 (the LightScribe SDK is 32-bit only).
+  RUNTIME: "win-x86"
+
+# Every job runs on the Windows runner.
+default:
+  tags:
+    - windows
+
+# ── build ───────────────────────────────────────────────────────────────────
+# Does the whole solution still compile? Core (AnyCPU) + Cli + Gui (x86).
+build:
+  stage: build
+  script:
+    - dotnet --info
+    - dotnet restore Futureburn.sln
+    - dotnet build Futureburn.sln -c Release --no-restore
+
+# ── test ────────────────────────────────────────────────────────────────────
+# Run the xUnit suite in tests/Futureburn.Core.Tests.
+test:
+  stage: test
+  script:
+    - dotnet test tests/Futureburn.Core.Tests/Futureburn.Core.Tests.csproj -c Release --logger "trx;LogFileName=futureburn-tests.trx" --results-directory test-results
+  artifacts:
+    when: always
+    paths:
+      - test-results/
+    expire_in: 1 week
+  # To get the GitLab merge-request test-report widget, add the
+  # JunitXml.TestLogger package to the test project and swap the logger to
+  #   --logger "junit;LogFilePath=test-results/futureburn-tests.xml"
+  # then add:  reports: { junit: test-results/futureburn-tests.xml }
+
+# ── publish ─────────────────────────────────────────────────────────────────
+# Two self-contained x86 builds — they run on any Windows box with no .NET
+# runtime installed (true to the "no installers" spirit of the project).
+
+# The "cmd" build — the Futureburn.Cli command-line tool.
+publish:cli:
+  stage: publish
+  script:
+    - dotnet publish src/Futureburn.Cli/Futureburn.Cli.csproj -c Release -r $RUNTIME --self-contained true -o publish/cli
+  artifacts:
+    name: "futureburn-cli-$CI_COMMIT_SHORT_SHA"
+    paths:
+      - publish/cli/
+    expire_in: 30 days
+
+# The "windows" build — the Futureburn.Gui WPF application.
+publish:gui:
+  stage: publish
+  script:
+    - dotnet publish src/Futureburn.Gui/Futureburn.Gui.csproj -c Release -r $RUNTIME --self-contained true -o publish/gui
+  artifacts:
+    name: "futureburn-gui-$CI_COMMIT_SHORT_SHA"
+    paths:
+      - publish/gui/
+    expire_in: 30 days
