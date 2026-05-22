@@ -11,6 +11,7 @@ Housekeeping pass, no behaviour changes:
 - **Mascot icon.** The cool-CD character (`src/Futureburn.Gui/app.ico`) is now the program/taskbar icon, wired in via `<ApplicationIcon>`. The source art's white background was flood-filled to transparency from the edges — so the character's *own* whites (sneakers, disc highlights) survive while the background drops out — then squared and rendered into a 16–256 px multi-resolution `.ico`.
 - **`docs/` folder.** New how-it-works documentation: architecture, burn engines, audio CDs, data discs, video discs, LightScribe, the CD-Text/gapless situation, and a full CLI reference. `docs/README.md` is the index.
 - **README cleanup.** The bloated 27-bullet "What works today" list is now a concise grouped feature list. CD-Text and `--gapless` moved to a new "Coming later" section (they need an SAO-capable drive — see `docs/cd-text-and-gapless.md`). Fixed stale text claiming three GUI tiles are placeholders (all four are live) and corrected the outdated repository-layout tree.
+- **Refreshed screenshots.** All four window screenshots updated to v0.0.54 (mascot icon now visible in the title bars), plus a new Burn Label (LightScribe) screenshot in the README.
 
 ## [0.0.53] — 2026-05-22
 

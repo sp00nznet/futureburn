@@ -67,6 +67,10 @@ The four-tile main window — pick what you want to do:
 
 ![CD Info window](docs/screenshots/cd-info.png)
 
+**Burn Label (LightScribe)** — drag in a picture, pick a LightScribe drive and a quality, hit Burn — the drive etches the artwork into the disc's top coating:
+
+![Burn Label window](docs/screenshots/burn-lightscribe.png)
+
 ---
 
 ## Why this exists
