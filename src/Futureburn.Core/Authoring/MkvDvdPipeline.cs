@@ -28,6 +28,8 @@ public static class MkvDvdPipeline
         string OutputFolder,
         bool IsPal = false,
         string? Label = null,
+        // Author a navigable menu (Play / Scene Selection) instead of auto-play.
+        bool Menu = false,
         // Force VLC-only skeleton IFOs even if dvdauthor is installed (debug).
         bool SkeletonOnly = false);
 
@@ -50,7 +52,8 @@ public static class MkvDvdPipeline
         int SubtitlesMuxed,
         int Chapters,
         string Aspect,
-        string OutputFolder);
+        string OutputFolder,
+        bool HasMenu);
 
     /// <summary>
     /// Probe the input video and report what the pipeline would carry over.
@@ -191,16 +194,33 @@ public static class MkvDvdPipeline
             onProgress?.Invoke(0.92);
 
             // --- Author the DVD-Video folder. (0.92 .. 1.0)
-            if (dvdauthor is not null)
+            var audioLangs = audioStreams.Select(a => IsoLanguage.To2Letter(a.Language)).ToList();
+
+            // When a menu is requested, give the disc chapters to navigate —
+            // use the source's, or auto-generate them for a chapterless rip.
+            bool menuRequested = opts.Menu && dvdauthor is not null;
+            var effectiveChapters = (menuRequested && chapterStarts.Count < 2)
+                ? AutoChapters(totalDuration)
+                : chapterStarts;
+            bool hasMenu = false;
+
+            if (menuRequested)
             {
+                AuthorMenuDvd(dvdauthor!, ffmpeg, opts, authoredMpg, aspect,
+                              effectiveChapters, audioLangs, subLangs, label, tempDir, onLog);
+                hasMenu = true;
+            }
+            else if (dvdauthor is not null)
+            {
+                if (opts.Menu)
+                    onLog?.Invoke("dvdauthor not found — can't author a menu; auto-play disc instead.");
                 onLog?.Invoke($"Authoring via dvdauthor ({dvdauthor.VersionLine}) ...");
                 var spec = new DvdauthorRunner.DvdTitleSpec(
                     MpegFile:        authoredMpg,
                     IsPal:           opts.IsPal,
                     AspectRatio:     aspect,
                     ChapterStarts:   chapterStarts,
-                    AudioLangs:      audioStreams
-                        .Select(a => IsoLanguage.To2Letter(a.Language)).ToList(),
+                    AudioLangs:      audioLangs,
                     SubpictureLangs: subLangs);
                 dvdauthor.Author(spec, opts.OutputFolder, onLog);
             }
@@ -226,14 +246,116 @@ public static class MkvDvdPipeline
                 UsedDvdauthor:  dvdauthor is not null,
                 AudioTracks:    audioStreams.Count,
                 SubtitlesMuxed: subLangs.Count,
-                Chapters:       chapterStarts.Count,
+                Chapters:       effectiveChapters.Count,
                 Aspect:         aspect,
-                OutputFolder:   opts.OutputFolder);
+                OutputFolder:   opts.OutputFolder,
+                HasMenu:        hasMenu);
         }
         finally
         {
             try { Directory.Delete(tempDir, recursive: true); } catch { }
         }
+    }
+
+    // Author a DVD with a root menu + (if there are chapters) a scene menu.
+    private static void AuthorMenuDvd(
+        DvdauthorRunner dvdauthor, FfmpegRunner ffmpeg, Options opts,
+        string titleMpeg, string aspect, IReadOnlyList<TimeSpan> chapters,
+        IReadOnlyList<string> audioLangs, IReadOnlyList<string> subLangs,
+        string label, string tempDir, Action<string>? onLog)
+    {
+        var spumux = SpumuxRunner.Locate()
+            ?? throw new InvalidOperationException(
+                "DVD menus need spumux (bundled with DVDStyler). Install it, or drop the menu option.");
+
+        onLog?.Invoke("Building DVD menus ...");
+        var menuDir = Path.Combine(tempDir, "menus");
+        Directory.CreateDirectory(menuDir);
+
+        bool hasScenes = chapters.Count >= 2;
+
+        // Root menu — Play, and Scene Selection when there are chapters.
+        var rootRender = DvdMenuBuilder.RenderRootMenu(label, hasScenes, opts.IsPal, menuDir);
+        string rootMpg = BuildMenuMpeg(ffmpeg, spumux, rootRender, menuDir, "root", opts.IsPal, aspect, onLog);
+        var rootPgc = new DvdauthorRunner.MenuPgc(rootMpg,
+            rootRender.Buttons.Select(b => (b.Name, RootMenuCommand(b.Name))).ToList());
+
+        // Scene menu — one button per chapter (capped) plus Back.
+        DvdauthorRunner.MenuPgc? scenePgc = null;
+        if (hasScenes)
+        {
+            int n = Math.Min(chapters.Count, DvdMenuBuilder.MaxSceneButtons);
+            var labels = Enumerable.Range(1, n).Select(i => $"Chapter {i}").ToList();
+            var sceneRender = DvdMenuBuilder.RenderSceneMenu(labels, opts.IsPal, menuDir);
+            string sceneMpg = BuildMenuMpeg(ffmpeg, spumux, sceneRender, menuDir, "scene", opts.IsPal, aspect, onLog);
+            scenePgc = new DvdauthorRunner.MenuPgc(sceneMpg,
+                sceneRender.Buttons.Select(b => (b.Name, SceneMenuCommand(b.Name))).ToList());
+        }
+
+        var menuSpec = new DvdauthorRunner.MenuDvdSpec(
+            TitleMpeg:       titleMpeg,
+            IsPal:           opts.IsPal,
+            AspectRatio:     aspect,
+            ChapterStarts:   chapters,
+            AudioLangs:      audioLangs,
+            SubpictureLangs: subLangs,
+            RootMenu:        rootPgc,
+            SceneMenu:       scenePgc);
+
+        onLog?.Invoke($"Authoring menu DVD via dvdauthor ({dvdauthor.VersionLine}) ...");
+        dvdauthor.AuthorWithMenus(menuSpec, opts.OutputFolder, onLog);
+    }
+
+    // dvdauthor command for a root-menu button.
+    private static string RootMenuCommand(string buttonName) => buttonName switch
+    {
+        "play"   => "jump titleset 1 title 1;",
+        "scenes" => "jump titleset 1 menu entry root;",
+        _        => throw new InvalidOperationException($"Unknown root menu button '{buttonName}'."),
+    };
+
+    // dvdauthor command for a scene-menu button ("ch3" → chapter 3; "back" → root).
+    private static string SceneMenuCommand(string buttonName)
+        => buttonName == "back"
+            ? "jump vmgm menu;"
+            : $"jump title 1 chapter {buttonName.Substring(2)};";
+
+    // Turn a rendered menu into a spumux'd menu MPEG: still PNG → short MPEG-2
+    // (with a silent audio track) → button highlight subpictures muxed in.
+    private static string BuildMenuMpeg(
+        FfmpegRunner ffmpeg, SpumuxRunner spumux, DvdMenuBuilder.RenderedMenu menu,
+        string menuDir, string prefix, bool isPal, string aspect, Action<string>? onLog)
+    {
+        var preMpg = Path.Combine(menuDir, $"{prefix}-pre.mpg");
+        var rr = ffmpeg.Run(new[]
+        {
+            "-y", "-loop", "1", "-i", menu.BackgroundPng,
+            "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
+            "-t", "4", "-aspect", aspect,
+            "-target", isPal ? "pal-dvd" : "ntsc-dvd", "-f", "dvd", preMpg,
+        });
+        if (rr.ExitCode != 0 || !File.Exists(preMpg))
+            throw new InvalidOperationException(
+                $"ffmpeg failed building the {prefix} menu background (exit {rr.ExitCode}).");
+
+        var xml = Path.Combine(menuDir, $"{prefix}-spumux.xml");
+        File.WriteAllText(xml, DvdMenuBuilder.BuildSpumuxXml(menu));
+        var menuMpg = Path.Combine(menuDir, $"{prefix}-menu.mpg");
+        spumux.MuxMenu(preMpg, menuMpg, xml, isPal, onLog);
+        onLog?.Invoke($"  {prefix} menu built ({menu.Buttons.Count} button(s)).");
+        return menuMpg;
+    }
+
+    // Generate evenly-spaced chapter marks for a rip that has none — aim for
+    // roughly 8 chapters so the scene menu is useful.
+    private static List<TimeSpan> AutoChapters(TimeSpan duration)
+    {
+        var marks = new List<TimeSpan> { TimeSpan.Zero };
+        if (duration <= TimeSpan.FromMinutes(4)) return marks;   // too short to chapter
+        double intervalSec = Math.Max(120, duration.TotalSeconds / 8);
+        for (double t = intervalSec; t < duration.TotalSeconds - 60; t += intervalSec)
+            marks.Add(TimeSpan.FromSeconds(t));
+        return marks;
     }
 
     /// <summary>

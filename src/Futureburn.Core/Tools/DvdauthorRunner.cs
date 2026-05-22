@@ -61,18 +61,26 @@ public sealed class DvdauthorRunner
         IReadOnlyList<string>? SubpictureLangs = null);
 
     /// <summary>
-    /// Author a DVD-Video folder from a single title described by <paramref name="spec"/>.
+    /// Author a DVD-Video folder from a single auto-playing title (no menus).
     /// </summary>
     public void Author(DvdTitleSpec spec, string outputFolder, Action<string>? onLog = null)
+        => RunXml(BuildXml(spec), outputFolder, onLog);
+
+    /// <summary>
+    /// Author a DVD-Video folder with a navigable menu system described by
+    /// <paramref name="spec"/> — a root menu and optional scene-selection menu.
+    /// </summary>
+    public void AuthorWithMenus(MenuDvdSpec spec, string outputFolder, Action<string>? onLog = null)
+        => RunXml(BuildMenuXml(spec), outputFolder, onLog);
+
+    // Write the XML to a temp file and run `dvdauthor -o outFolder -x xml`.
+    private void RunXml(string xml, string outputFolder, Action<string>? onLog)
     {
-        var xml = BuildXml(spec);
         var xmlPath = Path.Combine(Path.GetTempPath(), $"futureburn-dvdauthor-{Guid.NewGuid():N}.xml");
         File.WriteAllText(xmlPath, xml);
-
         try
         {
-            // dvdauthor -o outputFolder -x xmlPath. -o overrides any "dest" in
-            // the XML, so we leave dest out and rely on -o.
+            // -o overrides any "dest" in the XML, so we leave dest out.
             var psi = new ProcessStartInfo
             {
                 FileName               = ExePath,
@@ -162,6 +170,86 @@ public sealed class DvdauthorRunner
     public static string BuildSingleTitleXml(
         string outputFolder, string mpegInput, bool isPal = false, string aspectRatio = "4:3")
         => BuildXml(new DvdTitleSpec(mpegInput, isPal, aspectRatio));
+
+    /// <summary>One menu PGC: its background MPEG and its named buttons.</summary>
+    public sealed record MenuPgc(
+        string MpegFile,
+        // Each button: its name (must match the spumux subpicture button name)
+        // and the dvdauthor command run when the button is activated.
+        IReadOnlyList<(string Name, string Command)> Buttons);
+
+    /// <summary>A DVD-Video with a root menu, an optional scene menu, and one title.</summary>
+    public sealed record MenuDvdSpec(
+        string TitleMpeg,
+        bool IsPal,
+        string AspectRatio,
+        IReadOnlyList<TimeSpan> ChapterStarts,
+        IReadOnlyList<string> AudioLangs,
+        IReadOnlyList<string> SubpictureLangs,
+        MenuPgc RootMenu,
+        // null when the disc has no chapters → no scene-selection menu.
+        MenuPgc? SceneMenu);
+
+    /// <summary>
+    /// Build the dvdauthor XML for a menu DVD: a VMGM root menu (<c>entry="title"</c>),
+    /// an optional VTSM scene menu (<c>entry="root"</c>), and the title with its
+    /// chapter stops. The title returns to the root menu when it finishes.
+    /// </summary>
+    public static string BuildMenuXml(MenuDvdSpec spec)
+    {
+        string fmt    = spec.IsPal ? "pal" : "ntsc";
+        string aspect = spec.AspectRatio;
+
+        var sb = new StringBuilder();
+        sb.AppendLine("<?xml version=\"1.0\"?>");
+        sb.AppendLine("<dvdauthor jumppad=\"1\">");
+
+        // VMGM — the root menu (Play / Scenes).
+        sb.AppendLine("  <vmgm>");
+        sb.AppendLine("    <menus>");
+        sb.AppendLine($"      <video format=\"{fmt}\" aspect=\"{aspect}\"/>");
+        sb.AppendLine("      <pgc entry=\"title\">");
+        sb.AppendLine($"        <vob file=\"{XmlEscape(spec.RootMenu.MpegFile)}\" pause=\"inf\"/>");
+        foreach (var (name, cmd) in spec.RootMenu.Buttons)
+            sb.AppendLine($"        <button name=\"{XmlEscape(name)}\">{XmlEscape(cmd)}</button>");
+        sb.AppendLine("      </pgc>");
+        sb.AppendLine("    </menus>");
+        sb.AppendLine("  </vmgm>");
+
+        // Titleset — optional scene menu, then the movie.
+        sb.AppendLine("  <titleset>");
+        if (spec.SceneMenu is not null)
+        {
+            sb.AppendLine("    <menus>");
+            sb.AppendLine($"      <video format=\"{fmt}\" aspect=\"{aspect}\"/>");
+            sb.AppendLine("      <pgc entry=\"root\">");
+            sb.AppendLine($"        <vob file=\"{XmlEscape(spec.SceneMenu.MpegFile)}\" pause=\"inf\"/>");
+            foreach (var (name, cmd) in spec.SceneMenu.Buttons)
+                sb.AppendLine($"        <button name=\"{XmlEscape(name)}\">{XmlEscape(cmd)}</button>");
+            sb.AppendLine("      </pgc>");
+            sb.AppendLine("    </menus>");
+        }
+        sb.AppendLine("    <titles>");
+        sb.AppendLine($"      <video format=\"{fmt}\" aspect=\"{aspect}\"/>");
+        foreach (var lang in spec.AudioLangs)
+            sb.AppendLine($"      <audio lang=\"{XmlEscape(lang)}\"/>");
+        foreach (var lang in spec.SubpictureLangs)
+            sb.AppendLine($"      <subpicture lang=\"{XmlEscape(lang)}\"/>");
+        sb.AppendLine("      <pgc>");
+        var chapters = FormatChapters(spec.ChapterStarts);
+        if (chapters.Length > 0)
+            sb.AppendLine($"        <vob file=\"{XmlEscape(spec.TitleMpeg)}\" chapters=\"{chapters}\"/>");
+        else
+            sb.AppendLine($"        <vob file=\"{XmlEscape(spec.TitleMpeg)}\"/>");
+        // When the movie ends, go back to the root menu instead of into limbo.
+        // dvdauthor requires `call` (not `jump`) for a title → menu transition.
+        sb.AppendLine("        <post>call vmgm menu;</post>");
+        sb.AppendLine("      </pgc>");
+        sb.AppendLine("    </titles>");
+        sb.AppendLine("  </titleset>");
+        sb.AppendLine("</dvdauthor>");
+        return sb.ToString();
+    }
 
     /// <summary>
     /// Format chapter start times for a dvdauthor <c>chapters="..."</c> attribute:

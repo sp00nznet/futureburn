@@ -66,11 +66,27 @@ public sealed class SpumuxRunner
     }
 
     /// <summary>
-    /// Multiplex one subpicture stream into an MPEG-PS. <paramref name="streamIndex"/>
+    /// Multiplex one text-subtitle stream into an MPEG-PS. <paramref name="streamIndex"/>
     /// is the subtitle stream number (0..31) the XML's stream will become.
     /// </summary>
     public void Mux(string inputPs, string outputPs, string xmlControlFile,
                     int streamIndex, bool isPal, Action<string>? onLog = null)
+        => RunSpumux(new[] { "-s", streamIndex.ToString(), xmlControlFile },
+                     inputPs, outputPs, isPal, onLog);
+
+    /// <summary>
+    /// Multiplex a DVD menu's button subpictures into the menu MPEG-PS.
+    /// Uses spumux's <c>-m dvd</c> mode; the XML describes the button rectangles
+    /// and the highlight/select overlay images.
+    /// </summary>
+    public void MuxMenu(string inputPs, string outputPs, string xmlControlFile,
+                        bool isPal, Action<string>? onLog = null)
+        => RunSpumux(new[] { "-m", "dvd", xmlControlFile },
+                     inputPs, outputPs, isPal, onLog);
+
+    // spumux reads the MPEG-PS from stdin and writes the result to stdout.
+    private void RunSpumux(IReadOnlyList<string> args, string inputPs, string outputPs,
+                           bool isPal, Action<string>? onLog)
     {
         var psi = new ProcessStartInfo
         {
@@ -81,10 +97,9 @@ public sealed class SpumuxRunner
             UseShellExecute        = false,
             CreateNoWindow         = true,
         };
-        psi.ArgumentList.Add("-s"); psi.ArgumentList.Add(streamIndex.ToString());
-        psi.ArgumentList.Add(xmlControlFile);
-        // spumux refuses to run without knowing the video system, even though
-        // the XML also carries movie-width/height — it reads this env var.
+        foreach (var a in args) psi.ArgumentList.Add(a);
+        // spumux refuses to run without knowing the video system — it reads
+        // this env var even when the XML also carries the dimensions.
         psi.EnvironmentVariables["VIDEO_FORMAT"] = isPal ? "PAL" : "NTSC";
 
         using var p = Process.Start(psi)
@@ -93,8 +108,8 @@ public sealed class SpumuxRunner
         p.ErrorDataReceived += (_, e) => { if (e.Data is not null) onLog?.Invoke(e.Data); };
         p.BeginErrorReadLine();
 
-        // spumux streams: feed input PS into stdin while draining stdout into
-        // the output file concurrently, or the pipes deadlock on a large file.
+        // Feed the input PS into stdin while draining stdout into the output
+        // file concurrently, or the pipes deadlock on a large file.
         using (var inFs  = File.OpenRead(inputPs))
         using (var outFs = File.Create(outputPs))
         {

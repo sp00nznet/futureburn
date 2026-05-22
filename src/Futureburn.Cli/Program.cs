@@ -100,7 +100,7 @@ static int PrintUsage()
     Console.WriteLine("  futureburn vcd-author <input> <out>   Author a Video CD folder from a video file (experimental)");
     Console.WriteLine("    flags: --pal (default NTSC), --label NAME, --profile 1|2|3");
     Console.WriteLine("  futureburn dvdv-author <input> <out>  MKV/MP4/... → DVD-Video: chapters, audio tracks, subtitles");
-    Console.WriteLine("    flags: --pal (default NTSC), --label NAME, --burn <drive> (author + burn in one step)");
+    Console.WriteLine("    flags: --pal, --label NAME, --menu (Play/Scene menu), --burn <drive> (author + burn)");
     Console.WriteLine("  futureburn finalize <drive>           CLOSE SESSION on a disc with open tracks (salvage operation)");
     Console.WriteLine("  futureburn eject <drive>              Eject the drive tray");
     Console.WriteLine("  futureburn load <drive>               Close (load) the drive tray");
@@ -1251,13 +1251,15 @@ static int DvdVideoAuthorCommand(string[] args)
     {
         Console.WriteLine();
         Console.WriteLine("usage: futureburn dvdv-author <input-video> <output-folder>");
-        Console.WriteLine("                              [--pal] [--label NAME] [--burn <drive>]");
+        Console.WriteLine("                              [--pal] [--label NAME] [--menu] [--burn <drive>]");
         Console.WriteLine("                              [--speed Nx] [--yes] [--skeleton-only]");
         Console.WriteLine();
         Console.WriteLine("Authors a DVD-Video folder (VIDEO_TS\\ + AUDIO_TS\\) from any video file");
         Console.WriteLine("— MKV, MP4, AVI ... — transcoding with ffmpeg and authoring with dvdauthor.");
         Console.WriteLine("Carries over chapter markers, every audio track, and text subtitles.");
         Console.WriteLine();
+        Console.WriteLine("  --menu           author a navigable menu (Play / Scene Selection) instead");
+        Console.WriteLine("                   of auto-playing; auto-generates chapters if the rip has none.");
         Console.WriteLine("  --burn <drive>   after authoring, build a UDF image and burn it to the");
         Console.WriteLine("                   drive — the whole MKV-to-disc pipeline in one command.");
         Console.WriteLine("  --skeleton-only  force VLC-only skeleton IFOs (debugging).");
@@ -1268,6 +1270,7 @@ static int DvdVideoAuthorCommand(string[] args)
     var outFolder     = args[2];
     bool isPal        = HasFlag(args, "--pal");
     bool skeletonOnly = HasFlag(args, "--skeleton-only");
+    bool menu         = HasFlag(args, "--menu");
     var label         = FlagValue(args, "--label") ?? Path.GetFileNameWithoutExtension(input);
     var burnDrive     = FlagValue(args, "--burn");
     bool skipConfirm  = HasFlag(args, "--yes") || HasFlag(args, "-y");
@@ -1312,7 +1315,9 @@ static int DvdVideoAuthorCommand(string[] args)
     Console.WriteLine($"  Subtitles: {probed.TextSubtitleLanguages.Count} text track(s)" +
         (probed.BitmapSubtitlesSkipped > 0
             ? $"  ({probed.BitmapSubtitlesSkipped} bitmap track(s) skipped — text subtitles only for now)" : ""));
-    Console.WriteLine($"  Chapters:  {probed.Chapters}");
+    Console.WriteLine($"  Chapters:  {probed.Chapters}" +
+        (menu && probed.Chapters < 2 ? "  (none — will auto-generate for the scene menu)" : ""));
+    Console.WriteLine($"  Menu:      {(menu ? "navigable menu (Play / Scene Selection)" : "auto-play on insert")}");
     if (burnTarget is not null)
         Console.WriteLine($"  Burn to:   {burnTarget.PrimaryMount}  {burnTarget.VendorId} {burnTarget.ProductId}");
     Console.WriteLine();
@@ -1324,7 +1329,8 @@ static int DvdVideoAuthorCommand(string[] args)
         int lastPct = -10;
         result = Futureburn.Core.Authoring.MkvDvdPipeline.Author(
             new Futureburn.Core.Authoring.MkvDvdPipeline.Options(
-                input, outFolder, isPal, label, skeletonOnly),
+                input, outFolder, IsPal: isPal, Label: label,
+                Menu: menu, SkeletonOnly: skeletonOnly),
             onLog: line =>
             {
                 // Skip the ffmpeg per-frame + dvdauthor per-VOBU spam.
@@ -1353,7 +1359,8 @@ static int DvdVideoAuthorCommand(string[] args)
             Console.WriteLine($"  VIDEO_TS\\{fi.Name,-16} {FormatBytes(fi.Length)}");
     Console.WriteLine("  AUDIO_TS\\          (empty — normal for DVD-Video)");
     Console.WriteLine($"  {result.AudioTracks} audio track(s), {result.SubtitlesMuxed} subtitle(s), " +
-                      $"{result.Chapters} chapter(s), {result.Aspect}");
+                      $"{result.Chapters} chapter(s), {result.Aspect}" +
+                      (result.HasMenu ? ", navigable menu" : ""));
     if (!result.UsedDvdauthor)
     {
         Console.WriteLine();

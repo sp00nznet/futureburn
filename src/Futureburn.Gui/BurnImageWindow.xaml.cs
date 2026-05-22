@@ -128,6 +128,7 @@ public partial class BurnImageWindow : Window
             "Video files|*.mkv;*.mp4;*.avi;*.m4v;*.mov;*.webm;*.wmv;*.ts;*.m2ts|All files|*.*");
         if (video is null) return;
 
+        bool withMenu      = MenuCheck.IsChecked == true;
         var label          = Path.GetFileNameWithoutExtension(video);
         var authoredFolder = Path.Combine(Path.GetTempPath(), $"futureburn-dvdv-{Guid.NewGuid():N}");
         var tempIso        = Path.Combine(Path.GetTempPath(), $"futureburn-build-{Guid.NewGuid():N}.iso");
@@ -145,7 +146,8 @@ public partial class BurnImageWindow : Window
             {
                 // 1. Author: transcode + subtitles + IFOs → a DVD-Video folder.
                 MkvDvdPipeline.Author(
-                    new MkvDvdPipeline.Options(video, authoredFolder, IsPal: false, Label: label),
+                    new MkvDvdPipeline.Options(video, authoredFolder,
+                        IsPal: false, Label: label, Menu: withMenu),
                     onLog: line => Dispatcher.Invoke(() =>
                         StatusText.Text = line.Length > 100 ? line.Substring(0, 100) : line),
                     onProgress: frac => Dispatcher.Invoke(() =>

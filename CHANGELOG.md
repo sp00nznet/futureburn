@@ -4,6 +4,22 @@ All notable changes to futureburn will land here. Format roughly follows [Keep a
 
 ## [Unreleased]
 
+## [0.0.47] — 2026-05-21
+
+### Added — DVD menus
+`dvdv-author --menu` (and a "DVD menu" checkbox on the GUI's Burn Blu-ray / DVD tile) authors a navigable menu instead of auto-playing the disc:
+- A **root menu** — "Play Movie", plus "Scene Selection" when the disc has chapters.
+- A **scene-selection menu** — one button per chapter (up to 12) plus a Back button.
+- `DvdMenuBuilder` renders the menu art with System.Drawing: the full-colour background, and the transparent highlight/select overlays (identical shapes, ≤3 colours, anti-aliasing off — honouring the DVD 4-colour subpicture rule, the thing most likely to fail on a first attempt).
+- Menu backgrounds become short MPEG-2 stills via ffmpeg; `spumux -m dvd` muxes the button-highlight subpictures; `DvdauthorRunner.BuildMenuXml` emits the VMGM root menu + VTSM scene menu with the navigation commands (`jump titleset 1 title 1`, `jump title 1 chapter N`, `call vmgm menu`, ...).
+- **Auto-chapters** — when `--menu` is used on a rip with no chapters, ~8 evenly-spaced chapter marks are generated so the scene menu is actually useful.
+
+### Tests
+- 6 new `DvdMenuTests`. 183 tests pass. Verified end-to-end: a 3-chapter MKV → `dvdv-author --menu` → a `validate-folder`-confirmed DVD-Video whose root and scene menu VOBs both carry the button-highlight subpicture stream.
+
+### Honestly experimental
+Menu authoring is verified to produce a well-formed disc; on-TV menu navigation hasn't had a dedicated set-top-player run yet.
+
 ## [0.0.46] — 2026-05-21
 
 ### Fixed — GUI file dialogs hung after the first one

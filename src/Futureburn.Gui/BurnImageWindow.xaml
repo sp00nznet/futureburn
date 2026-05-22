@@ -11,6 +11,8 @@
       <Button Content="Choose ISO..."    Click="ChooseIso_Click"    Padding="10,4"/>
       <Button Content="Choose folder..." Click="ChooseFolder_Click" Padding="10,4"/>
       <Button Content="Choose video..."  Click="ChooseVideo_Click"  Padding="10,4"/>
+      <CheckBox x:Name="MenuCheck" Content="DVD menu" VerticalAlignment="Center" Margin="8,0,2,0"
+                ToolTip="With Choose video: author a Play / Scene Selection menu instead of auto-play."/>
       <Separator/>
       <TextBlock Text="Drive:" VerticalAlignment="Center" Margin="6,0,4,0"/>
       <ComboBox x:Name="DriveCombo" Width="240"/>
