@@ -2,203 +2,208 @@ using Futureburn.Core.Spti;
 
 namespace Futureburn.Core.Tests;
 
+// The SEND CUE SHEET parameter list is plain BINARY, has no A0/A1/A2 pointer
+// descriptors, and uses DATA FORM 0x01 on the lead-in/lead-out entries. These
+// tests pin that format down — an earlier BCD-encoded version was rejected by
+// real drives with sense 0x5/0x26/0x00.
 public class SptiCueSheetTests
 {
+    private static byte[] Descriptor(byte[] cue, int index)
+        => cue.Skip(index * 8).Take(8).ToArray();
+
+    // ---- LbaToMsf (binary) ------------------------------------------------
+
     [Theory]
-    [InlineData(0,    0x00, 0x02, 0x00)]   // LBA 0 = MSF 00:02:00 (after 2-sec lead-in offset)
-    [InlineData(75,   0x00, 0x03, 0x00)]   // 1 second of data
-    [InlineData(150,  0x00, 0x04, 0x00)]   // 2 seconds
-    [InlineData(4500, 0x01, 0x02, 0x00)]   // 4500 sectors past lead-in = 1:02 absolute
-    [InlineData(-150, 0x00, 0x00, 0x00)]   // pre-lead-in
-    public void LbaToMsfBcd_ConvertsCorrectly(long lba, byte expM, byte expS, byte expF)
+    [InlineData(-150, 0,  0,  0)]    // pre-lead-in
+    [InlineData(0,    0,  2,  0)]    // LBA 0 = MSF 00:02:00
+    [InlineData(75,   0,  3,  0)]    // 1 second of data
+    [InlineData(150,  0,  4,  0)]    // 2 seconds
+    public void LbaToMsf_ConvertsCorrectly(long lba, byte m, byte s, byte f)
     {
-        var (m, s, f) = SptiCueSheet.LbaToMsfBcd(lba);
-        Assert.Equal(expM, m);
-        Assert.Equal(expS, s);
-        Assert.Equal(expF, f);
+        var (gm, gs, gf) = SptiCueSheet.LbaToMsf(lba);
+        Assert.Equal(m, gm);
+        Assert.Equal(s, gs);
+        Assert.Equal(f, gf);
     }
 
     [Fact]
-    public void LbaToMsfBcd_BcdEncodesEachField()
+    public void LbaToMsf_IsBinaryNotBcd()
     {
-        // 23 minutes 45 seconds → 0x23, 0x45 (BCD; not 0x17, 0x2D)
-        // Pick an LBA: 23*60*75 + 45*75 - 150 = 103500 + 3375 - 150 = 106725
-        var (m, s, f) = SptiCueSheet.LbaToMsfBcd(106725);
-        Assert.Equal(0x23, m);
-        Assert.Equal(0x45, s);
-        Assert.Equal(0x00, f);
+        // 23 min 45 sec → binary 23, 45 (NOT BCD 0x23, 0x45).
+        // LBA: 23*60*75 + 45*75 - 150 = 103500 + 3375 - 150 = 106725.
+        var (m, s, f) = SptiCueSheet.LbaToMsf(106725);
+        Assert.Equal(23, m);
+        Assert.Equal(45, s);
+        Assert.Equal(0,  f);
     }
 
-    [Fact]
-    public void BuildAudioCd_OneTrack_HasA0A1A2PlusTrackEntries()
-    {
-        var cue = SptiCueSheet.BuildAudioCd(
-            new[] { new SptiCueSheet.Track(LengthSectors: 4500) },  // 1 minute
-            gapless: true);
-
-        // Expect: A0 + A1 + A2 + (Index 0 + Index 1 for track 1) + lead-out marker = 6 descriptors = 48 bytes
-        Assert.Equal(48, cue.Length);
-
-        // Pull out the descriptor types from byte 2 (INDEX field).
-        var indexFields = new byte[cue.Length / 8];
-        for (int i = 0; i < indexFields.Length; i++)
-            indexFields[i] = cue[i * 8 + 2];
-
-        Assert.Equal(0xA0, indexFields[0]);
-        Assert.Equal(0xA1, indexFields[1]);
-        Assert.Equal(0xA2, indexFields[2]);
-        Assert.Equal(0x00, indexFields[3]);  // track 1 pre-gap
-        Assert.Equal(0x01, indexFields[4]);  // track 1 body
-        Assert.Equal(0x01, indexFields[5]);  // lead-out marker
-    }
+    // ---- Cue sheet structure ---------------------------------------------
 
     [Fact]
-    public void BuildAudioCd_FiveTracks_ProducesExpectedDescriptorCount()
+    public void BuildAudioCd_HasLeadInPerTrackAndLeadOut()
     {
+        // 1 lead-in + 2 per track + 1 lead-out.
         var tracks = Enumerable.Range(1, 5)
-            .Select(_ => new SptiCueSheet.Track(LengthSectors: 4500))
-            .ToArray();
-
+            .Select(_ => new SptiCueSheet.Track(4500)).ToArray();
         var cue = SptiCueSheet.BuildAudioCd(tracks, gapless: true);
-        // 3 pointer entries + 2 entries per track + 1 lead-out marker = 14 descriptors
-        Assert.Equal(14 * 8, cue.Length);
+        Assert.Equal((2 + 5 * 2) * 8, cue.Length);
     }
 
     [Fact]
-    public void BuildAudioCd_GaplessTrack2Index0_EqualsTrack2Index1()
+    public void BuildAudioCd_FirstDescriptorIsTheLeadIn()
     {
-        // For gapless, track N's INDEX 0 and INDEX 1 are at the same MSF
-        // (zero-frame pre-gap).
-        var tracks = new[]
+        var cue = SptiCueSheet.BuildAudioCd(new[] { new SptiCueSheet.Track(4500) });
+        var d = Descriptor(cue, 0);
+        Assert.Equal(0x01, d[0]);   // CTL|ADR
+        Assert.Equal(0x00, d[1]);   // TNO 0 = lead-in
+        Assert.Equal(0x00, d[2]);   // INDEX 0
+        Assert.Equal(0x01, d[3]);   // DATA FORM 0x01 = audio pause
+        Assert.Equal(0x00, d[5]);   // MSF 00:00:00
+        Assert.Equal(0x00, d[6]);
+        Assert.Equal(0x00, d[7]);
+    }
+
+    [Fact]
+    public void BuildAudioCd_LastDescriptorIsTheLeadOut()
+    {
+        var cue = SptiCueSheet.BuildAudioCd(new[] { new SptiCueSheet.Track(4500) });
+        var d = Descriptor(cue, cue.Length / 8 - 1);
+        Assert.Equal(0xAA, d[1]);   // TNO 0xAA = lead-out
+        Assert.Equal(0x01, d[2]);   // INDEX 1
+        Assert.Equal(0x01, d[3]);   // DATA FORM 0x01 = audio pause
+    }
+
+    [Fact]
+    public void BuildAudioCd_HasNoA0A1A2PointerDescriptors()
+    {
+        var tracks = Enumerable.Range(1, 12)
+            .Select(_ => new SptiCueSheet.Track(4500)).ToArray();
+        var cue = SptiCueSheet.BuildAudioCd(tracks);
+        for (int i = 0; i < cue.Length; i += 8)
+            Assert.True(cue[i + 2] is not (0xA0 or 0xA1 or 0xA2),
+                        $"descriptor {i / 8} is an A0/A1/A2 pointer — those don't belong in a cue sheet");
+    }
+
+    [Fact]
+    public void BuildAudioCd_TrackNumbersAreBinary()
+    {
+        // 19 tracks: the cue sheet must carry binary track numbers, so track
+        // 19's descriptors hold byte 19 (0x13) — not BCD 0x19.
+        var tracks = Enumerable.Range(1, 19)
+            .Select(_ => new SptiCueSheet.Track(4500)).ToArray();
+        var cue = SptiCueSheet.BuildAudioCd(tracks);
+
+        // Layout: descriptor 0 = lead-in; track N's INDEX 0 is at 1 + (N-1)*2.
+        Assert.Equal(10, Descriptor(cue, 1 + (10 - 1) * 2)[1]);   // track 10 → 10
+        Assert.Equal(19, Descriptor(cue, 1 + (19 - 1) * 2)[1]);   // track 19 → 19
+        Assert.Equal(19, Descriptor(cue, 1 + (19 - 1) * 2 + 1)[1]);
+    }
+
+    [Fact]
+    public void BuildAudioCd_AudioPayloadEntriesUseDataForm00()
+    {
+        var cue = SptiCueSheet.BuildAudioCd(new[]
         {
-            new SptiCueSheet.Track(LengthSectors: 4500),
-            new SptiCueSheet.Track(LengthSectors: 4500),
-        };
-        var cue = SptiCueSheet.BuildAudioCd(tracks, gapless: true);
-
-        // Layout: A0(0) A1(1) A2(2) T1Idx0(3) T1Idx1(4) T2Idx0(5) T2Idx1(6) LeadOut(7)
-        // Compare bytes 5/6/7 (M/S/F) of T2Idx0 and T2Idx1.
-        for (int i = 5; i < 8; i++)
-            Assert.Equal(cue[5 * 8 + i], cue[6 * 8 + i]);
-    }
-
-    [Fact]
-    public void BuildAudioCd_NonGapless_AddsPreGapBetweenTracks()
-    {
-        var tracks = new[]
-        {
-            new SptiCueSheet.Track(LengthSectors: 4500),
-            new SptiCueSheet.Track(LengthSectors: 4500),
-        };
-        var gapless    = SptiCueSheet.BuildAudioCd(tracks, gapless: true);
-        var nonGapless = SptiCueSheet.BuildAudioCd(tracks, gapless: false);
-
-        // Same descriptor count.
-        Assert.Equal(gapless.Length, nonGapless.Length);
-
-        // The lead-out MSF (descriptor 2 = A2) should be 150 sectors later
-        // in non-gapless because of the inter-track gap.
-        // 150 sectors = 2 sec → MSF byte 6 (S) differs by 0x02 in BCD.
-        Assert.NotEqual(gapless[2 * 8 + 6], nonGapless[2 * 8 + 6]);
-    }
-
-    [Fact]
-    public void BuildAudioCd_AudioTracksCarryCdDaControlByte()
-    {
-        var cue = SptiCueSheet.BuildAudioCd(
-            new[] { new SptiCueSheet.Track(LengthSectors: 4500) },
-            gapless: true);
-
-        // Every descriptor's byte 0 should be 0x01 (ADR=0, audio CTL).
+            new SptiCueSheet.Track(4500), new SptiCueSheet.Track(4500),
+        });
+        // Track descriptors (between lead-in at 0 and lead-out at the end).
+        for (int i = 1; i < cue.Length / 8 - 1; i++)
+            Assert.Equal(0x00, Descriptor(cue, i)[3]);
+        // Every descriptor's CTL|ADR byte is 0x01 (audio).
         for (int i = 0; i < cue.Length; i += 8)
             Assert.Equal(0x01, cue[i]);
     }
 
-    [Fact]
-    public void BuildAudioCd_TrackNumbersAreBcdEncoded()
-    {
-        // Regression: we previously sent track numbers in binary (e.g. track 10
-        // as 0x0A) which has invalid BCD nibbles in the low half and made the
-        // drive reject SEND CUE SHEET with sense 0x5/0x26/0x00. Track numbers
-        // must be BCD: 1→0x01, 9→0x09, 10→0x10, 19→0x19, 99→0x99.
-        var tracks = Enumerable.Range(1, 19)
-            .Select(_ => new SptiCueSheet.Track(LengthSectors: 4500))
-            .ToArray();
-        var cue = SptiCueSheet.BuildAudioCd(tracks, gapless: true);
-
-        // First 3 descriptors are the A0/A1/A2 pointers. A1's PMIN field
-        // (byte 5) holds the last track number (BCD). For 19 tracks: 0x19.
-        Assert.Equal(0x19, cue[1 * 8 + 5]);
-
-        // Each per-track entry's TNO (byte 1) should be BCD. Layout after the
-        // 3 pointer descriptors: 2 entries per track. For track 10 (the
-        // first one that bites if we got binary wrong), the first entry's
-        // TNO byte is at descriptor index 3 + (10-1)*2 = 21.
-        int track10Idx0Offset = (3 + (10 - 1) * 2) * 8;
-        Assert.Equal(0x10, cue[track10Idx0Offset + 1]);
-
-        // And track 19's body entry: descriptor 3 + (19-1)*2 + 1 = 40.
-        int track19Idx1Offset = (3 + (19 - 1) * 2 + 1) * 8;
-        Assert.Equal(0x19, cue[track19Idx1Offset + 1]);
-    }
+    // ---- CD-Text flag -----------------------------------------------------
 
     [Fact]
-    public void BuildAudioCd_A0FirstTrackIsBcd()
+    public void BuildAudioCd_CdTextSetsDataForm41OnLeadInOnly()
     {
-        // Even though A0's first track is always 1 (which encodes to 0x01 in
-        // both binary and BCD), document the contract explicitly.
         var cue = SptiCueSheet.BuildAudioCd(
-            new[] { new SptiCueSheet.Track(LengthSectors: 4500) },
-            gapless: true);
-        // A0 is descriptor 0, PMIN at byte 5.
-        Assert.Equal(0x01, cue[0 * 8 + 5]);
+            new[] { new SptiCueSheet.Track(4500), new SptiCueSheet.Track(4500) },
+            gapless: true, cdText: true);
+        Assert.Equal(0x41, Descriptor(cue, 0)[3]);                  // lead-in
+        Assert.Equal(0x01, Descriptor(cue, cue.Length / 8 - 1)[3]); // lead-out unchanged
     }
 
     [Fact]
-    public void BuildAudioCd_CdTextSetsDataForm41OnLeadInPointers()
+    public void BuildAudioCd_NoCdTextLeadInIsPlainAudioPause()
     {
-        var tracks = new[]
+        var cue = SptiCueSheet.BuildAudioCd(
+            new[] { new SptiCueSheet.Track(4500) }, gapless: true, cdText: false);
+        Assert.Equal(0x01, Descriptor(cue, 0)[3]);
+    }
+
+    // ---- Gapless vs not ---------------------------------------------------
+
+    [Fact]
+    public void BuildAudioCd_GaplessTrack2Index0EqualsIndex1()
+    {
+        var cue = SptiCueSheet.BuildAudioCd(new[]
         {
-            new SptiCueSheet.Track(LengthSectors: 4500),
-            new SptiCueSheet.Track(LengthSectors: 4500),
-        };
-        var cue = SptiCueSheet.BuildAudioCd(tracks, gapless: true, cdText: true);
-
-        // A0/A1/A2 (descriptors 0,1,2) carry DATA FORM 0x41 — the 0x40 bit tells
-        // the drive CD-Text will be written into the lead-in.
-        Assert.Equal(0x41, cue[0 * 8 + 3]);
-        Assert.Equal(0x41, cue[1 * 8 + 3]);
-        Assert.Equal(0x41, cue[2 * 8 + 3]);
-
-        // Per-track body descriptors (index 3 onward) stay DATA FORM 0x00.
-        for (int d = 3; d < cue.Length / 8; d++)
-            Assert.Equal(0x00, cue[d * 8 + 3]);
+            new SptiCueSheet.Track(4500), new SptiCueSheet.Track(4500),
+        }, gapless: true);
+        // Track 2: INDEX 0 at descriptor 3, INDEX 1 at descriptor 4.
+        var idx0 = Descriptor(cue, 3);
+        var idx1 = Descriptor(cue, 4);
+        Assert.Equal(idx1[5], idx0[5]);
+        Assert.Equal(idx1[6], idx0[6]);
+        Assert.Equal(idx1[7], idx0[7]);
     }
 
     [Fact]
-    public void BuildAudioCd_NoCdTextKeepsDataFormZero()
+    public void BuildAudioCd_NonGaplessPushesTheLeadOutLater()
     {
-        var cue = SptiCueSheet.BuildAudioCd(
-            new[] { new SptiCueSheet.Track(LengthSectors: 4500) },
-            gapless: true, cdText: false);
-        for (int d = 0; d < cue.Length / 8; d++)
-            Assert.Equal(0x00, cue[d * 8 + 3]);
+        var tracks = new[] { new SptiCueSheet.Track(4500), new SptiCueSheet.Track(4500) };
+        var gapless    = SptiCueSheet.BuildAudioCd(tracks, gapless: true);
+        var nonGapless = SptiCueSheet.BuildAudioCd(tracks, gapless: false);
+        // Same descriptor count; the inter-track gap moves the lead-out.
+        Assert.Equal(gapless.Length, nonGapless.Length);
+        var gLeadOut  = Descriptor(gapless,    gapless.Length / 8 - 1);
+        var ngLeadOut = Descriptor(nonGapless, nonGapless.Length / 8 - 1);
+        Assert.True(ngLeadOut[6] != gLeadOut[6] || ngLeadOut[7] != gLeadOut[7]);
     }
+
+    // ---- Byte-level worked example (from the MMC research) ----------------
+
+    [Fact]
+    public void BuildAudioCd_ThreeTracks_MatchesWorkedExample()
+    {
+        // Tracks of 10, 12, 8 sectors → starts LBA 0, 10, 22; lead-out LBA 30.
+        var cue = SptiCueSheet.BuildAudioCd(new[]
+        {
+            new SptiCueSheet.Track(10), new SptiCueSheet.Track(12), new SptiCueSheet.Track(8),
+        }, gapless: true);
+
+        byte[][] expected =
+        {
+            new byte[] { 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00 },  // lead-in
+            new byte[] { 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00 },  // T1 idx0
+            new byte[] { 0x01, 0x01, 0x01, 0x00, 0x00, 0x00, 0x02, 0x00 },  // T1 idx1
+            new byte[] { 0x01, 0x02, 0x00, 0x00, 0x00, 0x00, 0x02, 0x0A },  // T2 idx0 (LBA 10)
+            new byte[] { 0x01, 0x02, 0x01, 0x00, 0x00, 0x00, 0x02, 0x0A },  // T2 idx1
+            new byte[] { 0x01, 0x03, 0x00, 0x00, 0x00, 0x00, 0x02, 0x16 },  // T3 idx0 (LBA 22)
+            new byte[] { 0x01, 0x03, 0x01, 0x00, 0x00, 0x00, 0x02, 0x16 },  // T3 idx1
+            new byte[] { 0x01, 0xAA, 0x01, 0x01, 0x00, 0x00, 0x02, 0x1E },  // lead-out (LBA 30)
+        };
+
+        Assert.Equal(expected.Length * 8, cue.Length);
+        for (int i = 0; i < expected.Length; i++)
+            Assert.Equal(expected[i], Descriptor(cue, i));
+    }
+
+    // ---- Guards ----------------------------------------------------------
 
     [Fact]
     public void BuildAudioCd_RejectsZeroTracks()
-    {
-        Assert.Throws<ArgumentException>(() =>
+        => Assert.Throws<ArgumentException>(() =>
             SptiCueSheet.BuildAudioCd(Array.Empty<SptiCueSheet.Track>()));
-    }
 
     [Fact]
     public void BuildAudioCd_Rejects100Tracks()
     {
         var tracks = Enumerable.Range(1, 100)
-            .Select(_ => new SptiCueSheet.Track(LengthSectors: 100))
-            .ToArray();
-        Assert.Throws<ArgumentException>(() =>
-            SptiCueSheet.BuildAudioCd(tracks));
+            .Select(_ => new SptiCueSheet.Track(100)).ToArray();
+        Assert.Throws<ArgumentException>(() => SptiCueSheet.BuildAudioCd(tracks));
     }
 }

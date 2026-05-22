@@ -1,48 +1,50 @@
 namespace Futureburn.Core.Spti;
 
-// Builds a SCSI MMC SEND CUE SHEET parameter list for an audio CD-DA disc.
+// Builds a SCSI MMC SEND CUE SHEET (opcode 0x5D) parameter list for an audio
+// CD-DA disc burned Disc-At-Once / Session-At-Once.
 //
-// Each cue-sheet descriptor is 8 bytes:
-//   byte 0: CTL (high 4 bits) | ADR (low 4 bits)
-//             CTL = 0 for plain CD-DA audio (no pre-emphasis, no copy bit)
-//             ADR = 1 for "current position" format (the only kind we use)
-//             so byte 0 = 0x01 for CD-DA tracks; or 0x10 if your interpretation
-//             swaps the nibbles. We use the MMC-6 layout: byte 0 = 0x01 for audio.
-//   byte 1: TNO — track number (00 = lead-in, 01-99 = tracks, AA = lead-out)
-//   byte 2: INDEX — 00 = pre-gap, 01 = track body, A0/A1/A2 = special pointers
-//   byte 3: DATA FORM — 0x00 for CD-DA mode 0 (raw 2352-byte audio)
-//   byte 4: SCMS / reserved — 0
-//   byte 5: M (MSF minute, BCD)
-//   byte 6: S (MSF second, BCD)
-//   byte 7: F (MSF frame, BCD; 75 frames = 1 second)
+// Each cue-sheet descriptor is 8 bytes (MMC-5 §6.26.3.4, Table 489):
+//   byte 0: CTL (high nibble) | ADR (low nibble)
+//             CTL = 0 for plain CD-DA audio; ADR = 1 ("time point").
+//             So byte 0 = 0x01 for every audio track/lead-in/lead-out entry.
+//   byte 1: TNO — track number. 0 = lead-in, 1..99 = tracks, 0xAA = lead-out.
+//   byte 2: INDEX — 0 = pre-gap, 1 = track body / lead-out marker.
+//   byte 3: DATA FORM — 0x00 for CD-DA audio payload; 0x01 ("audio pause")
+//             for the lead-in and lead-out entries. OR'd with 0x40 on the
+//             lead-in entry when CD-Text is written into the lead-in (→ 0x41).
+//   byte 4: SCMS / reserved — 0.
+//   byte 5: M (MSF minute)   ─┐
+//   byte 6: S (MSF second)    ├─ PLAIN BINARY, not BCD (see below).
+//   byte 7: F (MSF frame)    ─┘  75 frames = 1 second.
 //
-// The first three descriptors are special "pointer" entries:
-//   A0: first track number, session format
-//   A1: last track number
-//   A2: lead-out start position
+// The descriptor stream is:
+//   1 lead-in entry  (TNO 0, INDEX 0, MSF 00:00:00 = LBA -150)
+//   2 entries per track (INDEX 0 pre-gap + INDEX 1 body)
+//   1 lead-out entry (TNO 0xAA, INDEX 1, at the lead-out address)
+// — no A0/A1/A2 pointer descriptors: the drive derives first/last track and
+// the lead-out address from the stream itself (this is what cdrecord and
+// libburn do; A0/A1/A2 descriptors are not part of a SEND CUE SHEET).
 //
-// Then for each audio track:
-//   Track N, INDEX 0: pre-gap start (LBA position; 0-frame for gapless)
-//   Track N, INDEX 1: track body start (LBA position)
+// **BINARY, not BCD.** The SEND CUE SHEET parameter list is plain binary
+// throughout — track numbers and every MSF field. The drive's firmware
+// converts to BCD itself when it writes the subcode Q-channel. An earlier
+// version of this file BCD-encoded everything ("to line up with the
+// Q-channel"); that was wrong and made the GE20LU10 reject SEND CUE SHEET
+// with sense 0x5/0x26/0x00 (INVALID FIELD IN PARAMETER LIST). cdrecord
+// (drv_mmc.c gen_cue_mmc/fillcue/lba_to_msf) and libburn (write.c add_cue)
+// both emit binary. Confirmed against MMC-5.
 //
-// MSF is in absolute CD time, where LBA 0 of the user-data area corresponds to
-// MSF 00:02:00 (a 2-second offset for the lead-in). LBA -150 is MSF 00:00:00.
-//
-// **STATUS:** This builder hasn't been validated against a real disc burn yet.
-// The MMC SEND CUE SHEET format is precise about bit layout, BCD encoding, and
-// pointer-entry structure; getting any byte wrong typically yields a bricked
-// CD-R. The first user to burn with `--gapless` is doing the validation. If
-// it fails, the cue sheet bytes are emitted in the burn log so we can debug.
+// MSF is absolute CD time: LBA 0 of the user-data area = MSF 00:02:00 (a
+// 2-second lead-in offset); LBA -150 = MSF 00:00:00.
 
 public static class SptiCueSheet
 {
     public sealed record Track(long LengthSectors);
 
     /// <summary>
-    /// Build the cue sheet for a gapless audio CD with the given track lengths.
-    /// When <paramref name="cdText"/> is true, the lead-in pointer entries
-    /// (A0/A1/A2) carry DATA FORM 0x41 instead of 0x00 — the 0x40 bit tells the
-    /// drive that CD-Text subchannel data will be written into the lead-in.
+    /// Build the cue sheet for an audio CD with the given track lengths.
+    /// When <paramref name="cdText"/> is true the lead-in entry's DATA FORM
+    /// gets the 0x40 "CD-Text in lead-in" bit.
     /// </summary>
     public static byte[] BuildAudioCd(IReadOnlyList<Track> tracks, bool gapless = true,
                                       bool cdText = false)
@@ -50,7 +52,8 @@ public static class SptiCueSheet
         if (tracks.Count == 0) throw new ArgumentException("Need at least one track", nameof(tracks));
         if (tracks.Count > 99)  throw new ArgumentException("CD-DA limit is 99 tracks",  nameof(tracks));
 
-        // Compute each track's start LBA (track 1 starts at 0).
+        // Each track's start LBA (track 1 starts at 0). Non-gapless inserts a
+        // standard 150-sector (2 s) pre-gap before each track after the first.
         var startsLba = new long[tracks.Count];
         long cursor = 0;
         for (int i = 0; i < tracks.Count; i++)
@@ -58,70 +61,42 @@ public static class SptiCueSheet
             startsLba[i] = cursor;
             cursor += tracks[i].LengthSectors;
             if (!gapless && i < tracks.Count - 1)
-            {
-                // Standard Red Book inter-track pre-gap = 150 sectors (2 sec).
                 cursor += 150;
-            }
         }
         long leadOutLba = cursor;
 
-        // Now build descriptors:
-        //   3 pointer entries (A0/A1/A2)
-        //   2 entries per track (INDEX 0 + INDEX 1) for tracks where pre-gap exists,
-        //   or 1 entry per track for fully gapless tracks 2..N. Track 1 always has
-        //   an INDEX 0 entry for the lead-in transition.
-        var descriptors = new List<byte[]>(3 + tracks.Count * 2);
+        // 1 lead-in + 2 per track + 1 lead-out.
+        var descriptors = new List<byte[]>(2 + tracks.Count * 2);
 
-        // DATA FORM for the lead-in pointer entries: 0x00 normally, 0x41 when
-        // CD-Text is to be stored in the lead-in (0x40 = "CD-Text present" bit,
-        // 0x01 = audio pause form). cdrdao and libburn both set this byte.
-        byte leadInForm = cdText ? (byte)0x41 : (byte)0x00;
+        // Lead-in: TNO 0, INDEX 0, MSF 00:00:00 (LBA -150). DATA FORM 0x01 =
+        // audio pause; 0x41 when CD-Text rides in the lead-in.
+        byte leadInForm = cdText ? (byte)0x41 : (byte)0x01;
+        descriptors.Add(MakeDescriptor(ctl: 0x01, tno: 0x00, index: 0x00, dataForm: leadInForm,
+                                        m: 0, s: 0, f: 0));
 
-        // A0: first track number = 1, session format = 0 (CD-DA / CD-ROM).
-        // Track numbers in cue sheet entries are BCD-encoded (so they line up
-        // with what the drive writes into the subcode Q-channel verbatim).
-        // We previously sent them as binary, which broke for tracks 10+ — the
-        // drive's BCD parser saw invalid nibbles (e.g. binary 10 = 0x0A, where
-        // the low nibble 'A' is not a valid BCD digit) and rejected SEND CUE
-        // SHEET with sense 0x5/0x26/0x00 (INVALID FIELD IN PARAMETER LIST).
-        descriptors.Add(MakeDescriptor(ctl: 0x01, tno: 0x00, index: 0xA0, dataForm: leadInForm,
-                                        b5: ToBcd(1), b6: 0x00, b7: 0x00));
-
-        // A1: last track number (BCD).
-        descriptors.Add(MakeDescriptor(ctl: 0x01, tno: 0x00, index: 0xA1, dataForm: leadInForm,
-                                        b5: ToBcd(tracks.Count), b6: 0x00, b7: 0x00));
-
-        // A2: lead-out start position.
-        var (loM, loS, loF) = LbaToMsfBcd(leadOutLba);
-        descriptors.Add(MakeDescriptor(ctl: 0x01, tno: 0x00, index: 0xA2, dataForm: leadInForm,
-                                        b5: loM, b6: loS, b7: loF));
-
-        // Per-track entries.
+        // Per-track INDEX 0 (pre-gap) + INDEX 1 (body). Track numbers binary.
         for (int i = 0; i < tracks.Count; i++)
         {
-            byte tno = ToBcd(i + 1);   // BCD-encoded track number (01-99)
-            var (m, s, f) = LbaToMsfBcd(startsLba[i]);
+            byte tno = (byte)(i + 1);
+            long index1Lba = startsLba[i];
+            // Gapless: INDEX 0 == INDEX 1. Non-gapless: INDEX 0 is 150 sectors
+            // earlier (for track 1 that lands at LBA -150 = 00:00:00).
+            long index0Lba = gapless ? index1Lba : index1Lba - 150;
 
-            // INDEX 0 (pre-gap entry). For track 1 it's at MSF 00:00:00 (lead-in handoff).
-            // For tracks 2..N in gapless mode, Index 0 == Index 1 (zero-length pre-gap).
-            // For non-gapless mode, Index 0 is 150 sectors before Index 1.
-            long index0Lba = i == 0
-                ? -150  // before any user data
-                : (gapless ? startsLba[i] : startsLba[i] - 150);
-            var (m0, s0, f0) = LbaToMsfBcd(index0Lba);
+            var (m0, s0, f0) = LbaToMsf(index0Lba);
             descriptors.Add(MakeDescriptor(ctl: 0x01, tno: tno, index: 0x00, dataForm: 0x00,
-                                            b5: m0, b6: s0, b7: f0));
+                                            m: m0, s: s0, f: f0));
 
-            // INDEX 1 (track body start).
+            var (m1, s1, f1) = LbaToMsf(index1Lba);
             descriptors.Add(MakeDescriptor(ctl: 0x01, tno: tno, index: 0x01, dataForm: 0x00,
-                                            b5: m,  b6: s,  b7: f));
+                                            m: m1, s: s1, f: f1));
         }
 
-        // Lead-out marker.
-        descriptors.Add(MakeDescriptor(ctl: 0x01, tno: 0xAA, index: 0x01, dataForm: 0x00,
-                                        b5: loM, b6: loS, b7: loF));
+        // Lead-out: TNO 0xAA, INDEX 1, DATA FORM 0x01 (audio pause).
+        var (loM, loS, loF) = LbaToMsf(leadOutLba);
+        descriptors.Add(MakeDescriptor(ctl: 0x01, tno: 0xAA, index: 0x01, dataForm: 0x01,
+                                        m: loM, s: loS, f: loF));
 
-        // Concatenate.
         var result = new byte[descriptors.Count * 8];
         for (int i = 0; i < descriptors.Count; i++)
             Array.Copy(descriptors[i], 0, result, i * 8, 8);
@@ -129,17 +104,14 @@ public static class SptiCueSheet
     }
 
     private static byte[] MakeDescriptor(byte ctl, byte tno, byte index, byte dataForm,
-                                         byte b5, byte b6, byte b7)
-    {
-        // ctl is the byte-0 value (CTL << 4 | ADR), but we accept it pre-packed.
-        return new byte[] { ctl, tno, index, dataForm, 0x00, b5, b6, b7 };
-    }
+                                         byte m, byte s, byte f)
+        => new byte[] { ctl, tno, index, dataForm, 0x00, m, s, f };
 
     /// <summary>
-    /// Convert LBA (offset within the user-data area, with LBA 0 = MSF 00:02:00)
-    /// to MSF (Min, Sec, Frame) in BCD encoding. LBA -150 = MSF 00:00:00.
+    /// Convert an LBA (LBA 0 = MSF 00:02:00, LBA -150 = MSF 00:00:00) to its
+    /// absolute MSF as plain binary bytes.
     /// </summary>
-    public static (byte M, byte S, byte F) LbaToMsfBcd(long lba)
+    public static (byte M, byte S, byte F) LbaToMsf(long lba)
     {
         long abs = lba + 150;
         if (abs < 0) abs = 0;
@@ -147,14 +119,7 @@ public static class SptiCueSheet
         long rem     = abs - minutes * 60 * 75;
         long seconds = rem / 75;
         long frames  = rem - seconds * 75;
-        return (ToBcd((int)minutes), ToBcd((int)seconds), ToBcd((int)frames));
-    }
-
-    internal static byte ToBcd(int n)
-    {
-        // BCD: tens digit in upper nibble, units digit in lower nibble.
-        if (n < 0 || n > 99) throw new ArgumentOutOfRangeException(nameof(n));
-        return (byte)(((n / 10) << 4) | (n % 10));
+        return ((byte)minutes, (byte)seconds, (byte)frames);
     }
 
     /// <summary>Pretty-print the cue sheet bytes for debugging / burn logs.</summary>

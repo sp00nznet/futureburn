@@ -4,6 +4,19 @@ All notable changes to futureburn will land here. Format roughly follows [Keep a
 
 ## [Unreleased]
 
+## [0.0.53] — 2026-05-22
+
+### Fixed — SEND CUE SHEET cue sheet format (binary, no pointer entries)
+The DAO/SAO cue-sheet builder (`SptiCueSheet`) had three format bugs that made a drive reject SEND CUE SHEET with sense `0x5/0x26/0x00` (INVALID FIELD IN PARAMETER LIST) — so `--gapless` and CD-Text never actually worked:
+- It **BCD-encoded** track numbers and MSF times. The SEND CUE SHEET parameter list is plain **binary** — the v0.0.41 "BCD fix" was backwards. (cdrecord and libburn both emit binary; confirmed against MMC-5 §6.26.)
+- It emitted **A0/A1/A2 pointer descriptors**. A cue sheet has none — the drive derives first/last track and the lead-out from the descriptor stream. The sheet is now: one lead-in entry, two per track, one lead-out entry.
+- **DATA FORM** on the lead-in and lead-out entries was `0x00`; it must be `0x01` (audio pause).
+
+The cue sheet now matches what cdrecord/libburn emit, byte for byte (worked example covered by a test). New `cuesheet-probe <drive>` diagnostic sends cue sheets to a drive and reports acceptance — SEND CUE SHEET writes nothing, so it's free to run against a blank disc.
+
+### Note — CD-Text needs an SAO-capable drive; the LG GE20LU10 isn't one
+With the corrected cue sheet, the test-bench GE20LU10 (FE06) still rejects SEND CUE SHEET — and rejects all seven structurally-different cue sheets `cuesheet-probe` tries, down to a single-track minimal one. This drive doesn't do DAO/SAO cue-sheet recording. CD-Text rides in the SAO lead-in, so it can't be burned on this drive; it needs an SAO-capable writer. The cue-sheet fix is spec-correct (MMC-5 + cdrecord + libburn) but consequently can't be hardware-validated here. No CD-R was consumed — SEND CUE SHEET writes nothing.
+
 ## [0.0.52] — 2026-05-22
 
 ### Fixed — multi-track audio CDs now finalize

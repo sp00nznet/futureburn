@@ -28,6 +28,7 @@ return args[0].ToLowerInvariant() switch
     "burn-folder"                  => BurnFolderCommand(args),
     "imapi-v1-info"                => ImapiV1Info(),
     "spti-info"                    => SptiInfo(args),
+    "cuesheet-probe"               => CueSheetProbe(args),
     "cd-info"                      => CdInfo(args),
     "cd-lookup"                    => CdLookup(args),
     "ffmpeg"                       => FfmpegInfo(),
@@ -715,6 +716,96 @@ static int CdTextDump(string[] args)
     Console.WriteLine();
     Console.WriteLine($"{packs.Length} bytes, {Futureburn.Core.Spti.SptiCdText.PackCount(packs)} packs. " +
                       "Compare against a reference tool before trusting a real burn.");
+    return 0;
+}
+
+// Diagnostic: send hand-built cue sheets to the drive and report which (if any)
+// it accepts. SEND CUE SHEET writes nothing to the disc, so this is free to run
+// against a blank CD-R. Tests structural variants to pin down the drive's
+// requirements for a CD-DA DAO cue sheet (a 3-track 10/12/8-sector layout).
+static int CueSheetProbe(string[] args)
+{
+    if (args.Length < 2 || args[1].Length < 1 || !char.IsLetter(args[1][0]))
+    {
+        Console.Error.WriteLine("usage: futureburn cuesheet-probe <drive>");
+        return 1;
+    }
+    char letter = char.ToUpperInvariant(args[1][0]);
+
+    // One 8-byte descriptor.
+    static byte[] E(byte ctl, byte tno, byte idx, byte form, byte m, byte s, byte f)
+        => new byte[] { ctl, tno, idx, form, 0x00, m, s, f };
+    static byte[] Cat(params byte[][] es) => es.SelectMany(e => e).ToArray();
+
+    // 3-track gapless layout: tracks at LBA 0/10/22, lead-out LBA 30.
+    var leadIn  = E(0x01, 0x00, 0x00, 0x01, 0, 0, 0);
+    var t1i0    = E(0x01, 0x01, 0x00, 0x00, 0, 2, 0);
+    var t1i1    = E(0x01, 0x01, 0x01, 0x00, 0, 2, 0);
+    var t2i0    = E(0x01, 0x02, 0x00, 0x00, 0, 2, 10);
+    var t2i1    = E(0x01, 0x02, 0x01, 0x00, 0, 2, 10);
+    var t3i0    = E(0x01, 0x03, 0x00, 0x00, 0, 2, 22);
+    var t3i1    = E(0x01, 0x03, 0x01, 0x00, 0, 2, 22);
+    var leadOut = E(0x01, 0xAA, 0x01, 0x01, 0, 2, 30);
+
+    var variants = new (string Label, byte[] Cue)[]
+    {
+        ("lead-in + 2/track + lead-out (current)",
+            Cat(leadIn, t1i0, t1i1, t2i0, t2i1, t3i0, t3i1, leadOut)),
+        ("no lead-in entry",
+            Cat(t1i0, t1i1, t2i0, t2i1, t3i0, t3i1, leadOut)),
+        ("no lead-out entry",
+            Cat(leadIn, t1i0, t1i1, t2i0, t2i1, t3i0, t3i1)),
+        ("INDEX 1 only (no pre-gap entries)",
+            Cat(leadIn, t1i1, t2i1, t3i1, leadOut)),
+        ("tracks only (no lead-in/out)",
+            Cat(t1i0, t1i1, t2i0, t2i1, t3i0, t3i1)),
+        ("with A0/A1/A2 pointer entries",
+            Cat(E(0x01, 0x00, 0xA0, 0x01, 1, 0, 0),     // A0: first track 1
+                E(0x01, 0x00, 0xA1, 0x01, 3, 0, 0),     // A1: last track 3
+                E(0x01, 0x00, 0xA2, 0x01, 0, 2, 30),    // A2: lead-out
+                t1i0, t1i1, t2i0, t2i1, t3i0, t3i1, leadOut)),
+        ("single track, minimal",
+            Cat(leadIn, t1i0, t1i1, leadOut)),
+    };
+
+    Console.WriteLine();
+    Console.WriteLine($"Probing SEND CUE SHEET on {letter}:  (no media is written) ...");
+    Console.WriteLine();
+
+    try
+    {
+        using var dev = Futureburn.Core.Spti.SptiDevice.OpenDriveLetter(letter);
+        try { dev.WaitUntilReady(timeoutSec: 20); } catch { }
+
+        foreach (var (label, cue) in variants)
+        {
+            try { dev.ConfigureForAudio(Futureburn.Core.Spti.SptiDevice.CdAudioWriteMode.SessionAtOnce); }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"  MODE SELECT (SAO) failed — {ex.Message}");
+                break;
+            }
+            try
+            {
+                dev.SendCueSheet(cue);
+                Console.WriteLine($"  ACCEPTED ✓   {label}  ({cue.Length / 8} entries)");
+            }
+            catch (Futureburn.Core.Spti.SptiScsiException ex)
+            {
+                Console.WriteLine($"  rejected 0x{ex.SenseKey:X}/0x{ex.Asc:X2}/0x{ex.Ascq:X2}   {label}");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"  ERROR ({ex.Message})   {label}");
+            }
+        }
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"Couldn't open {letter}: {ex.Message}");
+        return 1;
+    }
+    Console.WriteLine();
     return 0;
 }
 
