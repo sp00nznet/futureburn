@@ -65,6 +65,13 @@ public static class FsImageBuilder
         {
             fsi.FileSystemsToCreate = (int)fileSystems;
 
+            // IMAPI2FS defaults its image-size cap to a CD's capacity, so a
+            // larger image (a DVD-Video, a big data DVD) fails AddTree with
+            // "...larger than the current configured limit". Lift the cap past
+            // Blu-ray — ~51 GB of 2048-byte blocks — and let the burn step be
+            // what enforces the actual loaded disc's real capacity.
+            fsi.FreeMediaBlocks = 25_000_000;
+
             // Volume label: ISO 9660 caps at 32 chars, must be ASCII-clean for
             // strict ISO. IMAPI handles transliteration; we just trim.
             var label = volumeLabel ?? "FUTUREBURN";

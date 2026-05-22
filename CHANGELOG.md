@@ -4,6 +4,16 @@ All notable changes to futureburn will land here. Format roughly follows [Keep a
 
 ## [Unreleased]
 
+## [0.0.44] — 2026-05-21
+
+### Fixed — two burn-path bugs, found burning a real DVD-Video
+First end-to-end hardware run of the MKV→DVD pipeline (Wallace & Gromit's *The Wrong Trousers* MKV → a finalized DVD-R) surfaced two real bugs:
+- **`FsImageBuilder` capped image size at CD capacity.** IMAPI2FS defaults its image-size limit to a CD, so building a UDF image larger than ~700 MB failed with "...larger than the current configured limit" — every DVD-Video or large data DVD would have hit this. Now sets `FreeMediaBlocks` past Blu-ray capacity; the burn step enforces the actual disc's real capacity.
+- **`SptiDataBurner` reported a false failure on DVD finalization.** It trusted `CLOSE SESSION`'s return code, but the GE20LU10 keeps returning sense `0x5/0x72/0x03` (session fixation error — incomplete track) while it finalizes the lead-out asynchronously, which can take minutes. The burn was reported FAILED on a disc that had in fact finalized seconds later. Now polls `READ DISC INFORMATION` until the disc reports Finalized — the same proven pattern the audio burner uses.
+
+### Validated
+The MKV→DVD pipeline is now hardware-proven: a 30-minute 1080p MKV transcoded, subtitle-muxed, authored, imaged, and burned to a DVD-R that reads back as a well-formed, finalized DVD-Video. 162 tests pass.
+
 ## [0.0.43] — 2026-05-21
 
 ### Added — MKV → DVD-Video pipeline

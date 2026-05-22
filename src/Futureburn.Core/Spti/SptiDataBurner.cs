@@ -264,31 +264,69 @@ public static class SptiDataBurner
             Thread.Sleep(500);
         }
 
-        // CLOSE SESSION with retry on the specific session-fixation sense
-        // code, which means the drive's track-close is still in flight even
-        // though our poll above thinks it's done. Up to 5 attempts with
-        // exponential backoff (covers ~30 seconds total).
-        int sessAttempt = 0;
-        while (true)
+        // Finalize the disc. On this drive CLOSE SESSION (IMMED=1) keeps
+        // returning sense 0x5/0x72/0x03 (SESSION FIXATION ERROR — INCOMPLETE
+        // TRACK IN SESSION) for a while after the data write: the track-close
+        // is still committing internally, so the drive can't fixate yet, and
+        // DVD-R lead-out fixation itself can take a couple of minutes.
+        //
+        // The honest success signal is NOT CLOSE SESSION's return code — it's
+        // the disc actually reaching Finalized. (A burn was once reported as
+        // FAILED on a disc that had in fact finalized seconds later.) So we
+        // nudge CLOSE SESSION, then poll READ DISC INFORMATION until the disc
+        // reports Finalized/Complete — the same pattern the audio burner uses.
+        onLog?.Invoke("  closing session (writing lead-out — this can take a few minutes) ...");
+        var sessionDeadline = DateTime.UtcNow.AddSeconds(300);
+        bool finalized     = false;
+        bool closeAccepted = false;
+        int  sessPolls     = 0;
+        while (DateTime.UtcNow < sessionDeadline)
         {
+            sessPolls++;
+
+            // The disc may finalize asynchronously after a CLOSE SESSION that
+            // itself reported a sense error — so check disc state first.
             try
             {
-                dev.CloseTrackOrSession(function: 2, trackNumber: 0, immediate: true);
-                break;
+                var di = dev.ReadDiscInformation();
+                if (di.Status == SptiDevice.DiscStatus.Finalized
+                    || di.LastSessionState == SptiDevice.SessionState.Complete)
+                { finalized = true; break; }
             }
-            catch (SptiScsiException ex)
-                when (ex.SenseKey == 0x5 && ex.Asc == 0x72 && ex.Ascq == 0x03 && sessAttempt < 5)
+            catch (SptiScsiException ex) when (ex.SenseKey is 0x6 or 0x2)
             {
-                sessAttempt++;
-                Thread.Sleep(2000 * sessAttempt);
+                // Drive still busy committing — retry.
             }
-            catch (Exception ex)
+
+            // Nudge CLOSE SESSION until the drive accepts it once; re-issuing
+            // it on an already-in-progress fixation can itself error.
+            if (!closeAccepted)
             {
-                throw new AudioCdBurner.BurnException(
-                    $"CLOSE SESSION failed (track-close polled stable after {polls} reads, " +
-                    $"session-close attempt {sessAttempt + 1}): {ex.Message}", ex);
+                try
+                {
+                    dev.CloseTrackOrSession(function: 2, trackNumber: 0, immediate: true);
+                    closeAccepted = true;
+                }
+                catch (SptiScsiException ex)
+                    when (ex.SenseKey == 0x5 && ex.Asc == 0x72 && ex.Ascq == 0x03)
+                {
+                    // Track-close still in flight — the drive can't fixate yet.
+                }
+                catch (SptiScsiException ex) when (ex.SenseKey is 0x6 or 0x2)
+                {
+                    // Drive busy — wait.
+                }
             }
+
+            Thread.Sleep(3000);
         }
+
+        if (!finalized)
+            throw new AudioCdBurner.BurnException(
+                $"Disc didn't reach Finalized state within 5 minutes ({sessPolls} polls). " +
+                "All data was written — the disc may still finalize late, or try " +
+                "`futureburn finalize <drive>` to re-attempt the session close.");
+        onLog?.Invoke($"  session closed — disc finalized after {sessPolls} poll(s).");
     }
 
     private static int ReadFully(Stream s, byte[] buf, int count)
