@@ -38,6 +38,12 @@ public partial class MainWindow : Window
         w.Show();
     }
 
+    private void Drives_Click(object sender, RoutedEventArgs e)
+    {
+        var w = new DriveStatusWindow { Owner = this };
+        w.Show();
+    }
+
     private void OpenPlaceholder(string title, string message)
     {
         var w = new PlaceholderWindow(title, message) { Owner = this };

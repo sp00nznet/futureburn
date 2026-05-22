@@ -4,6 +4,11 @@ All notable changes to futureburn will land here. Format roughly follows [Keep a
 
 ## [Unreleased]
 
+## [0.0.50] — 2026-05-22
+
+### Added — Drives tile (what's loaded, at a glance)
+A new **Drives** tile on the main window opens a dashboard listing every optical drive, the disc currently in it, its state (blank / finalized / has-data / erasable, read straight from the drive over SCSI), and a suggested next action. CD Info does the deep single-disc inspection; this is the quick all-drives overview. The main-window tile grid grew from 2×2 to 3×2 to fit it.
+
 ## [0.0.49] — 2026-05-22
 
 ### Added — fuzzy MusicBrainz lookup in cd-lookup

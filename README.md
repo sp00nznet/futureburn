@@ -42,7 +42,6 @@ A passion project that grew teeth.
 
 - ⬜ Strict-Finalized status flag for multi-track burns (disc plays everywhere we've tested, but `READ DISC INFO` reports `Incomplete` — likely needs a different MMC close-function value or a follow-up CLOSE function 6/7 sequence; cosmetic, not blocking playback)
 - ⬜ Headless LightScribe submission (works today through the LSS user dialog with one click; full programmatic submission is blocked on undocumented LSS internals — see the project memory for the dead-end map)
-- ⬜ "What's loaded?" drive-enumeration UI tile
 - ⬜ Blu-ray burning (when the test hardware arrives)
 - ⬜ Mac/Linux ports — long after Windows is rock solid
 
@@ -65,6 +64,8 @@ The four-tile main window — pick what you want to do:
 **CD Info** — full SCSI readout of whatever's loaded: drive capabilities, finalization status, and complete TOC with per-track type and duration. Same data the CLI's `cd-info` command surfaces, just clickable:
 
 ![CD Info window](docs/screenshots/cd-info.png)
+
+**Drives** — an at-a-glance dashboard of every optical drive: what disc is in it, whether it's blank / finalized / has data, and a suggested next action. The quick overview to CD Info's deep dive.
 
 ---
 
