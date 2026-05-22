@@ -4,6 +4,15 @@ All notable changes to futureburn will land here. Format roughly follows [Keep a
 
 ## [Unreleased]
 
+## [0.0.46] — 2026-05-21
+
+### Fixed — GUI file dialogs hung after the first one
+Every common file dialog in the WPF GUI (Add files, Choose ISO/folder/video, Choose image, Save M3U8) hung hard after the first one opened in a session — the second `OpenFileDialog` / `OpenFolderDialog` / `SaveFileDialog` shown on the WPF UI thread froze inside the native dialog (`CommonItemDialog.RunDialog` → native, never returning; Windows reported `AppHangB1`). A captured stack of the frozen UI thread confirmed the freeze sat in the native common-item-dialog modal loop.
+- New `FileDialogs` helper runs every common dialog on its own fresh STA thread, so each one is "the first" on a clean thread; the UI thread just awaits and keeps pumping. All seven dialog call sites across the three windows now route through it.
+
+### Changed
+- README screenshots refreshed — the four-tile main window, plus a new shot of the Burn Blu-ray / DVD window with its MKV→DVD "Choose video" workflow.
+
 ## [0.0.45] — 2026-05-21
 
 ### Added — recent features wired into the WPF GUI

@@ -82,21 +82,18 @@ public partial class BurnAudioCdWindow : Window
         }
     }
 
-    private void AddFiles_Click(object sender, RoutedEventArgs e)
+    private async void AddFiles_Click(object sender, RoutedEventArgs e)
     {
-        var dlg = new Microsoft.Win32.OpenFileDialog
-        {
-            Filter = "Audio files|*.wav;*.mp3;*.m4a;*.aac;*.wma;*.flac|All files|*.*",
-            Multiselect = true,
-            Title = "Add audio tracks",
-        };
-        if (dlg.ShowDialog(this) != true) return;
+        var files = await FileDialogs.OpenFilesAsync(
+            "Add audio tracks",
+            "Audio files|*.wav;*.mp3;*.m4a;*.aac;*.wma;*.flac|All files|*.*");
+        if (files is null) return;
 
         Mouse.OverrideCursor = Cursors.Wait;
         try
         {
             int added = 0, skipped = 0;
-            foreach (var path in dlg.FileNames)
+            foreach (var path in files)
             {
                 if (TryAddTrack(path)) added++;
                 else skipped++;
@@ -217,44 +214,39 @@ public partial class BurnAudioCdWindow : Window
 
     // ---- Add folder + load/save playlist ---------------------------------
 
-    private void AddFolder_Click(object sender, RoutedEventArgs e)
+    private async void AddFolder_Click(object sender, RoutedEventArgs e)
     {
-        var dlg = new Microsoft.Win32.OpenFolderDialog
-        {
-            Title = "Choose a folder of audio files",
-        };
-        if (dlg.ShowDialog(this) != true) return;
+        var folder = await FileDialogs.OpenFolderAsync("Choose a folder of audio files");
+        if (folder is null) return;
         Mouse.OverrideCursor = Cursors.Wait;
         try
         {
-            var (added, skipped) = TryAddTracksFromFolder(dlg.FolderName);
+            var (added, skipped) = TryAddTracksFromFolder(folder);
             StatusText.Text = $"Added {added} track{(added == 1 ? "" : "s")} from folder" +
                               (skipped > 0 ? $" ({skipped} skipped)" : "") + ".";
         }
         finally { Mouse.OverrideCursor = null; }
     }
 
-    private void LoadPlaylist_Click(object sender, RoutedEventArgs e)
+    private async void LoadPlaylist_Click(object sender, RoutedEventArgs e)
     {
-        var dlg = new Microsoft.Win32.OpenFileDialog
-        {
-            Filter = "M3U / M3U8 playlists|*.m3u;*.m3u8|All files|*.*",
-            Title = "Load a playlist",
-        };
-        if (dlg.ShowDialog(this) != true) return;
+        var file = await FileDialogs.OpenFileAsync(
+            "Load a playlist",
+            "M3U / M3U8 playlists|*.m3u;*.m3u8|All files|*.*");
+        if (file is null) return;
         Mouse.OverrideCursor = Cursors.Wait;
         try
         {
-            var (added, skipped) = TryAddTracksFromPlaylist(dlg.FileName);
+            var (added, skipped) = TryAddTracksFromPlaylist(file);
             StatusText.Text = added == 0
                 ? "Couldn't load any tracks from that playlist."
-                : $"Loaded {added} track{(added == 1 ? "" : "s")} from {Path.GetFileName(dlg.FileName)}" +
+                : $"Loaded {added} track{(added == 1 ? "" : "s")} from {Path.GetFileName(file)}" +
                   (skipped > 0 ? $" ({skipped} skipped)" : "") + ".";
         }
         finally { Mouse.OverrideCursor = null; }
     }
 
-    private void SaveM3U_Click(object sender, RoutedEventArgs e)
+    private async void SaveM3U_Click(object sender, RoutedEventArgs e)
     {
         if (_tracks.Count == 0)
         {
@@ -262,14 +254,11 @@ public partial class BurnAudioCdWindow : Window
                 MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
-        var dlg = new Microsoft.Win32.SaveFileDialog
-        {
-            Filter = "Extended M3U8|*.m3u8|All files|*.*",
-            DefaultExt = ".m3u8",
-            FileName = "playlist.m3u8",
-            Title = "Save current track list as M3U8",
-        };
-        if (dlg.ShowDialog(this) != true) return;
+        var savePath = await FileDialogs.SaveFileAsync(
+            "Save current track list as M3U8",
+            "Extended M3U8|*.m3u8|All files|*.*",
+            defaultFileName: "playlist.m3u8", defaultExt: ".m3u8");
+        if (savePath is null) return;
 
         var sb = new StringBuilder();
         sb.AppendLine("#EXTM3U");
@@ -279,8 +268,8 @@ public partial class BurnAudioCdWindow : Window
             sb.AppendLine($"#EXTINF:{seconds},{t.Title}");
             sb.AppendLine(t.FullPath);
         }
-        File.WriteAllText(dlg.FileName, sb.ToString());
-        StatusText.Text = $"Saved {_tracks.Count} tracks to {dlg.FileName}.";
+        File.WriteAllText(savePath, sb.ToString());
+        StatusText.Text = $"Saved {_tracks.Count} tracks to {savePath}.";
     }
 
     private void MoveUp_Click(object sender, RoutedEventArgs e)

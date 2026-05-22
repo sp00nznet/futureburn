@@ -1,7 +1,6 @@
 using System.IO;
 using System.Windows;
 using System.Windows.Media.Imaging;
-using Microsoft.Win32;
 using Futureburn.Core.LightScribe;
 
 namespace Futureburn.Gui;
@@ -64,17 +63,25 @@ public partial class BurnLightScribeWindow : Window
         UpdateBurnButton();
     }
 
-    private void ChooseImage_Click(object sender, RoutedEventArgs e)
+    private async void ChooseImage_Click(object sender, RoutedEventArgs e)
     {
-        var dlg = new OpenFileDialog
+        string? path;
+        try
         {
-            Title  = "Pick a label image",
-            Filter = "Images|*.png;*.jpg;*.jpeg;*.bmp;*.gif;*.tif;*.tiff" +
-                     "|PNG|*.png|JPEG|*.jpg;*.jpeg|BMP|*.bmp|All files|*.*",
-        };
-        if (dlg.ShowDialog(this) != true) return;
+            path = await FileDialogs.OpenFileAsync(
+                "Pick a label image",
+                "Images|*.png;*.jpg;*.jpeg;*.bmp;*.gif;*.tif;*.tiff" +
+                "|PNG|*.png|JPEG|*.jpg;*.jpeg|BMP|*.bmp|All files|*.*");
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, $"Couldn't open the file picker:\n{ex.Message}",
+                "Choose image", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+        if (path is null) return;
 
-        SetImage(dlg.FileName);
+        SetImage(path);
     }
 
     private void SetImage(string path)

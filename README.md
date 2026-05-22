@@ -60,6 +60,10 @@ The four-tile main window — pick what you want to do:
 
 ![Burn Audio CD window](docs/screenshots/burn-audio-cd.png)
 
+**Burn Blu-ray / DVD** — hand it a ready ISO or a folder, or hit **Choose video** and feed it an MKV / MP4 — it transcodes that into a real DVD-Video, chapters, audio tracks and subtitles and all, then burns a disc that plays in a DVD player:
+
+![Burn Blu-ray / DVD window](docs/screenshots/burn-dvd.png)
+
 **CD Info** — full SCSI readout of whatever's loaded: drive capabilities, finalization status, and complete TOC with per-track type and duration. Same data the CLI's `cd-info` command surfaces, just clickable:
 
 ![CD Info window](docs/screenshots/cd-info.png)

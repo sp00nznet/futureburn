@@ -47,17 +47,15 @@ public partial class BurnImageWindow : Window
         UpdateDriveDiscText();
     }
 
-    private void ChooseIso_Click(object sender, RoutedEventArgs e)
+    private async void ChooseIso_Click(object sender, RoutedEventArgs e)
     {
-        var dlg = new Microsoft.Win32.OpenFileDialog
-        {
-            Filter = "Disc images|*.iso;*.img;*.bin|All files|*.*",
-            Title = "Choose an ISO image to burn",
-        };
-        if (dlg.ShowDialog(this) != true) return;
+        var path = await FileDialogs.OpenFileAsync(
+            "Choose an ISO image to burn",
+            "Disc images|*.iso;*.img;*.bin|All files|*.*");
+        if (path is null) return;
 
         CleanupTempIso();   // discard any previous folder-built temp
-        _isoPath = dlg.FileName;
+        _isoPath = path;
         var fi = new FileInfo(_isoPath);
         _isoBytes = fi.Length;
         IsoPathText.Text = _isoPath;
@@ -69,13 +67,10 @@ public partial class BurnImageWindow : Window
 
     private async void ChooseFolder_Click(object sender, RoutedEventArgs e)
     {
-        var dlg = new Microsoft.Win32.OpenFolderDialog
-        {
-            Title = "Choose a folder to burn (we'll build the ISO 9660 + Joliet + UDF image)",
-        };
-        if (dlg.ShowDialog(this) != true) return;
+        var folder = await FileDialogs.OpenFolderAsync(
+            "Choose a folder to burn (we'll build the ISO 9660 + Joliet + UDF image)");
+        if (folder is null) return;
 
-        var folder = dlg.FolderName;
         var label = Path.GetFileName(folder);
         if (string.IsNullOrEmpty(label)) label = "FUTUREBURN";
 
@@ -128,14 +123,11 @@ public partial class BurnImageWindow : Window
 
     private async void ChooseVideo_Click(object sender, RoutedEventArgs e)
     {
-        var dlg = new Microsoft.Win32.OpenFileDialog
-        {
-            Filter = "Video files|*.mkv;*.mp4;*.avi;*.m4v;*.mov;*.webm;*.wmv;*.ts;*.m2ts|All files|*.*",
-            Title  = "Choose a video to author + burn as a DVD-Video",
-        };
-        if (dlg.ShowDialog(this) != true) return;
+        var video = await FileDialogs.OpenFileAsync(
+            "Choose a video to author + burn as a DVD-Video",
+            "Video files|*.mkv;*.mp4;*.avi;*.m4v;*.mov;*.webm;*.wmv;*.ts;*.m2ts|All files|*.*");
+        if (video is null) return;
 
-        var video          = dlg.FileName;
         var label          = Path.GetFileNameWithoutExtension(video);
         var authoredFolder = Path.Combine(Path.GetTempPath(), $"futureburn-dvdv-{Guid.NewGuid():N}");
         var tempIso        = Path.Combine(Path.GetTempPath(), $"futureburn-build-{Guid.NewGuid():N}.iso");
