@@ -79,10 +79,14 @@ test:
 # of DLLs. True to the "no installers" spirit of the project.
 
 # The "cmd" build — the Futureburn.Cli command-line tool, one .exe.
+# IncludeAllContentForSelfExtract=true forces the bundle to fully extract to a
+# temp dir on first run — the .NET 5-style behaviour. Required for the GUI
+# (without it, WPF crashes with a misleading SetWindowLongWndProc
+# DllNotFoundException on x86), kept on the CLI for consistency.
 publish:cli:
   stage: publish
   script:
-    - dotnet publish src/Futureburn.Cli/Futureburn.Cli.csproj -c Release -r $RUNTIME --self-contained true -p:PublishSingleFile=true -o publish/cli
+    - dotnet publish src/Futureburn.Cli/Futureburn.Cli.csproj -c Release -r $RUNTIME --self-contained true -p:PublishSingleFile=true -p:IncludeAllContentForSelfExtract=true -o publish/cli
   artifacts:
     name: "futureburn-cli-$CI_COMMIT_SHORT_SHA"
     paths:
@@ -93,7 +97,7 @@ publish:cli:
 publish:gui:
   stage: publish
   script:
-    - dotnet publish src/Futureburn.Gui/Futureburn.Gui.csproj -c Release -r $RUNTIME --self-contained true -p:PublishSingleFile=true -o publish/gui
+    - dotnet publish src/Futureburn.Gui/Futureburn.Gui.csproj -c Release -r $RUNTIME --self-contained true -p:PublishSingleFile=true -p:IncludeAllContentForSelfExtract=true -o publish/gui
   artifacts:
     name: "futureburn-gui-$CI_COMMIT_SHORT_SHA"
     paths:

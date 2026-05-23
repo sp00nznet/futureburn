@@ -65,6 +65,11 @@ Desktop.ini
 *.img
 test-discs/
 
+# Local `dotnet publish` outputs (CI publishes into `publish/`; ad-hoc local
+# verification uses `local-publish/`). Both are throwaway build artefacts.
+publish/
+local-publish/
+
 # Ad-hoc screenshots / test artifacts dropped in the repo root during sessions
 # (committed screenshots live in docs/screenshots/ instead)
 /*.png
