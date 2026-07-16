@@ -171,7 +171,11 @@ public static class FfprobeRunner
         => el.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
 
     private static int? TryInt(JsonElement el, string name)
-        => el.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Number ? v.GetInt32() : null;
+        // TryGetInt32 (not GetInt32) so an out-of-Int32-range number — e.g. an
+        // MKV chapter's 64-bit ChapterUID reported as "id" — yields null instead
+        // of throwing FormatException.
+        => el.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Number
+           && v.TryGetInt32(out var n) ? n : null;
 
     private static int? TryIntString(JsonElement el, string name)
         => TryString(el, name) is { } s && int.TryParse(s, out var n) ? n : null;

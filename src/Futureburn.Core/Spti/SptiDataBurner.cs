@@ -37,6 +37,7 @@ public static class SptiDataBurner
         long ImageBytes,
         long ImageSectors,
         bool IsDvd,
+        bool IsBd,
         bool IsBinCue);
 
     public static DataBurnPlan Plan(OpticalDrive drive, string imagePath)
@@ -85,12 +86,18 @@ public static class SptiDataBurner
         bool isDvd = profileCode is 0x0011 or 0x0012 or 0x0013 or 0x0014
                                   or 0x0015 or 0x0016 or 0x0017
                                   or 0x001A or 0x001B or 0x002A or 0x002B;
-        if (!isCd && !isDvd)
+        // BD-R Sequential (SRM, 0x0041) is the hardware-tested path; it records
+        // sequentially exactly like DVD-R Sequential (RESERVE TRACK + WRITE +
+        // CLOSE). BD-R RRM (0x0042) and BD-RE (0x0043) are random-writable — we
+        // still route them through the sequential path for now.
+        // ponytail: only BD-R SRM verified on a real drive; tune RRM/RE if needed.
+        bool isBd  = profileCode is 0x0041 or 0x0042 or 0x0043;
+        if (!isCd && !isDvd && !isBd)
         {
             var name = Mmc.LookupProfile(profileCode).Name;
             throw new AudioCdBurner.BurnException(
-                $"Loaded disc is {name}, not a writable CD or DVD. " +
-                "Image burning currently supports CD-R/CD-RW and DVD-R/RW/+R/+RW.");
+                $"Loaded disc is {name}, not a writable CD, DVD, or BD. " +
+                "Image burning supports CD-R/CD-RW, DVD-R/RW/+R/+RW, and BD-R/BD-RE.");
         }
 
         return new DataBurnPlan(
@@ -100,6 +107,7 @@ public static class SptiDataBurner
             ImageBytes:       imageBytes,
             ImageSectors:     imageSectors,
             IsDvd:            isDvd,
+            IsBd:             isBd,
             IsBinCue:         isBinCue);
     }
 
@@ -124,7 +132,8 @@ public static class SptiDataBurner
         // right multiplier per disc type.
         if (requestedSpeedX is { } x && x > 0)
         {
-            int kbps = plan.IsDvd ? x * 1385 : x * 176;
+            // 1x: CD = 176 KB/s, DVD = 1,385 KB/s, BD = 4,390 KB/s.
+            int kbps = plan.IsBd ? x * 4390 : plan.IsDvd ? x * 1385 : x * 176;
             try { dev.SetCdSpeed(readSpeedKbps: 0xFFFF, writeSpeedKbps: kbps); }
             catch (Exception ex)
             {
@@ -133,15 +142,29 @@ public static class SptiDataBurner
         }
 
         // MODE SELECT for the right disc type.
-        try
+        if (plan.IsBd)
         {
-            if (plan.IsDvd) dev.ConfigureForDataDvd();
-            else            dev.ConfigureForDataCd();
+            // BD-R SRM records sequentially by virtue of the loaded profile; the
+            // CD/DVD Write Parameters mode page (0x05) doesn't apply and many BD
+            // drives reject it. Try the DVD-style page for drives that want it,
+            // but don't fail the burn if it's refused — RESERVE TRACK + WRITE
+            // carries the recording.
+            // ponytail: tolerant MODE SELECT; tighten if a BD drive needs it set.
+            try { dev.ConfigureForDataDvd(); }
+            catch (Exception ex) { onLog?.Invoke($"  (BD: MODE SELECT not applied — {ex.Message})"); }
         }
-        catch (Exception ex)
+        else
         {
-            throw new AudioCdBurner.BurnException(
-                $"MODE SELECT 10 ({(plan.IsDvd ? "DVD" : "CD")} data) failed: {ex.Message}", ex);
+            try
+            {
+                if (plan.IsDvd) dev.ConfigureForDataDvd();
+                else            dev.ConfigureForDataCd();
+            }
+            catch (Exception ex)
+            {
+                throw new AudioCdBurner.BurnException(
+                    $"MODE SELECT 10 ({(plan.IsDvd ? "DVD" : "CD")} data) failed: {ex.Message}", ex);
+            }
         }
 
         // For DVD-R/+R Sequential, the drive *requires* RESERVE TRACK before
@@ -149,14 +172,15 @@ public static class SptiDataBurner
         // 0x5/0x2C/0x00 (COMMAND SEQUENCE ERROR). It pre-allocates the track
         // size so the drive can set up its track-boundary state machine.
         // CD-R rejects RESERVE TRACK as ILLEGAL REQUEST (it's a DVD-mode
-        // command), so we only call it for DVD media.
-        if (plan.IsDvd)
+        // command), so we only call it for DVD media. BD-R SRM is sequential
+        // like DVD-R Sequential and needs the same pre-allocation.
+        if (plan.IsDvd || plan.IsBd)
         {
             try { dev.ReserveTrack((int)plan.ImageSectors); }
             catch (Exception ex)
             {
                 throw new AudioCdBurner.BurnException(
-                    $"RESERVE TRACK ({plan.ImageSectors} sectors) for DVD failed: {ex.Message}", ex);
+                    $"RESERVE TRACK ({plan.ImageSectors} sectors) for {(plan.IsBd ? "BD" : "DVD")} failed: {ex.Message}", ex);
             }
         }
 
@@ -231,7 +255,7 @@ public static class SptiDataBurner
         catch (Exception ex)
         { throw new AudioCdBurner.BurnException($"SYNCHRONIZE CACHE failed: {ex.Message}", ex); }
 
-        // CLOSE TRACK with explicit IMMED=1: the GE20LU10 returns instantly
+        // CLOSE TRACK with explicit IMMED=1: some drives return instantly
         // either way, so the explicit-async pattern + observable poll is the
         // honest contract. Without an active wait here, the immediately-
         // following CLOSE SESSION sees the track as still incomplete and
@@ -275,6 +299,11 @@ public static class SptiDataBurner
         // FAILED on a disc that had in fact finalized seconds later.) So we
         // nudge CLOSE SESSION, then poll READ DISC INFORMATION until the disc
         // reports Finalized/Complete — the same pattern the audio burner uses.
+        // BD-R SRM finalizes with CLOSE FUNCTION 6 (110b = "finalize disc");
+        // function 2 (close session) is a no-op on BD-R and leaves the disc
+        // Incomplete forever. CD/DVD use function 2. (Verified on a Pioneer
+        // BDR-206: fn 2 → still Incomplete after 5 min; fn 6 → Finalized in ~2s.)
+        byte sessionCloseFn = plan.IsBd ? (byte)6 : (byte)2;
         onLog?.Invoke("  closing session (writing lead-out — this can take a few minutes) ...");
         var sessionDeadline = DateTime.UtcNow.AddSeconds(300);
         bool finalized     = false;
@@ -304,7 +333,7 @@ public static class SptiDataBurner
             {
                 try
                 {
-                    dev.CloseTrackOrSession(function: 2, trackNumber: 0, immediate: true);
+                    dev.CloseTrackOrSession(function: sessionCloseFn, trackNumber: 0, immediate: true);
                     closeAccepted = true;
                 }
                 catch (SptiScsiException ex)

@@ -40,6 +40,8 @@ return args[0].ToLowerInvariant() switch
     "validate-folder"              => ValidateFolder(args),
     "vcd-author"                   => VcdAuthorCommand(args),
     "dvdv-author"                  => DvdVideoAuthorCommand(args),
+    "bd-author"                    => BdAuthorCommand(args),
+    "bd-author-info"               => BdAuthorInfo(),
     "finalize"                     => FinalizeDisc(args),
     "eject"                        => EjectDrive(args),
     "load"                         => LoadDrive(args),
@@ -68,7 +70,7 @@ static int PrintUsage()
     Console.WriteLine("  futureburn decode <in> <out.wav>      Decode any audio file to a CD-format WAV");
     Console.WriteLine("  futureburn playlist <file.m3u>        Parse and list an M3U / M3U8 playlist");
     Console.WriteLine("  futureburn burn <playlist> <drive>    Burn an audio CD from a playlist");
-    Console.WriteLine("  futureburn burn-iso <iso> <drive>     Burn an ISO image to a blank CD-R or DVD-R");
+    Console.WriteLine("  futureburn burn-iso <iso> <drive>     Burn an ISO image to a blank CD-R, DVD-R, or BD-R");
     Console.WriteLine("    flags: --dry-run, --yes, --speed Nx");
     Console.WriteLine("  futureburn mkiso <folder> <out.iso>   Build an ISO 9660+Joliet+UDF image from a folder");
     Console.WriteLine("    flags: --label NAME, --fs all|iso|joliet|udf");
@@ -102,6 +104,10 @@ static int PrintUsage()
     Console.WriteLine("    flags: --pal (default NTSC), --label NAME, --profile 1|2|3");
     Console.WriteLine("  futureburn dvdv-author <input> <out>  MKV/MP4/... → DVD-Video: chapters, audio tracks, subtitles");
     Console.WriteLine("    flags: --pal, --label NAME, --menu (Play/Scene menu), --burn <drive> (author + burn)");
+    Console.WriteLine("  futureburn bd-author <input> <out.iso>  MKV/MP4/... → Blu-ray (BDMV): UDF 2.50 ISO via tsMuxeR");
+    Console.WriteLine("    flags: --label NAME, --burn <drive> (author + burn), --speed Nx, --yes");
+    Console.WriteLine("           auto-conforms non-BD video/audio (ffmpeg); SRT→PGS subs + chapters carried over");
+    Console.WriteLine("  futureburn bd-author-info             Check tsMuxeR + ffmpeg availability for Blu-ray authoring");
     Console.WriteLine("  futureburn finalize <drive>           CLOSE SESSION on a disc with open tracks (salvage operation)");
     Console.WriteLine("  futureburn eject <drive>              Eject the drive tray");
     Console.WriteLine("  futureburn load <drive>               Close (load) the drive tray");
@@ -339,7 +345,7 @@ static int BurnIsoCommand(string[] args)
     Console.WriteLine($"  Drive:        {drive.PrimaryMount}  {drive.VendorId} {drive.ProductId} ({drive.Revision})");
     var profileCode = drive.CurrentProfiles.FirstOrDefault(p => p.Code != 0)?.Code ?? 0;
     Console.WriteLine($"  Disc:         {Mmc.LookupProfile(profileCode).Name}");
-    Console.WriteLine($"  Mode:         {(plan.IsDvd ? "DVD data (SAO + Mode 1)" : "CD data (TAO + Mode 1)")}");
+    Console.WriteLine($"  Mode:         {DataBurnModeLabel(plan)}");
     Console.WriteLine($"  Speed:        {(cdSpeedX is { } x ? x + "x" : "drive default")}");
     Console.WriteLine();
 
@@ -531,7 +537,7 @@ static int BurnFolderCommand(string[] args)
         var plan = Futureburn.Core.Spti.SptiDataBurner.Plan(drive, tempIso);
         Console.WriteLine();
         Console.WriteLine($"  Disc:  {Mmc.LookupProfile(drive.CurrentProfiles.FirstOrDefault(p => p.Code != 0)?.Code ?? 0).Name}");
-        Console.WriteLine($"  Mode:  {(plan.IsDvd ? "DVD data (SAO + Mode 1)" : "CD data (TAO + Mode 1)")}");
+        Console.WriteLine($"  Mode:  {DataBurnModeLabel(plan)}");
         Console.WriteLine($"  Speed: {(cdSpeedX is { } x ? x + "x" : "drive default")}");
 
         if (!skipConfirm)
@@ -585,6 +591,11 @@ static int BurnFolderCommand(string[] args)
         }
     }
 }
+
+static string DataBurnModeLabel(Futureburn.Core.Spti.SptiDataBurner.DataBurnPlan plan) =>
+    plan.IsBd  ? "BD data (SRM sequential, Mode 1)"
+  : plan.IsDvd ? "DVD data (SAO + Mode 1)"
+  :              "CD data (TAO + Mode 1)";
 
 static Futureburn.Core.Fs.FsImageBuilder.FileSystem? ParseFileSystemFlag(string s) => s switch
 {
@@ -1281,8 +1292,9 @@ static int SptiInfo(string[] args)
         Console.WriteLine($"  Product:      {inq.Product}");
         Console.WriteLine($"  Revision:     {inq.Revision}");
         Console.WriteLine();
-        Console.WriteLine("SPTI works. The SPTI burn engine itself is scaffolded but not yet implemented;");
-        Console.WriteLine("for actual burning, use --engine v2 (default) or --engine v1 (legacy fallback).");
+        Console.WriteLine("SPTI works. This drive accepts raw SCSI pass-through, so the SPTI burn");
+        Console.WriteLine("engine (--engine spti) can drive it. The v2 (default) and v1 engines remain");
+        Console.WriteLine("available as alternatives if a given burn misbehaves on this hardware.");
         return 0;
     }
     catch (Exception ex)
@@ -1493,7 +1505,7 @@ static int BurnAuthoredFolder(string folder, OpticalDrive drive,
         Console.WriteLine($"  image built: {FormatBytes(built.TotalBytes)} ({built.BlockCount:N0} sectors)");
 
         var plan = Futureburn.Core.Spti.SptiDataBurner.Plan(drive, tempIso);
-        Console.WriteLine($"  Mode:  {(plan.IsDvd ? "DVD data (SAO + Mode 1)" : "CD data (TAO + Mode 1)")}");
+        Console.WriteLine($"  Mode:  {DataBurnModeLabel(plan)}");
         Console.WriteLine($"  Speed: {(cdSpeedX is { } x ? x + "x" : "drive default")}");
 
         if (!skipConfirm)
@@ -1532,6 +1544,203 @@ static int BurnAuthoredFolder(string folder, OpticalDrive drive,
     finally
     {
         try { File.Delete(tempIso); } catch { }
+    }
+}
+
+static int BdAuthorInfo()
+{
+    Console.WriteLine();
+    Console.WriteLine("Blu-ray authoring needs two external tools (we don't bundle either):");
+    Console.WriteLine();
+
+    var tsm = Futureburn.Core.Tools.TsMuxerLocator.Locate();
+    if (tsm is null)
+    {
+        Console.WriteLine("  tsMuxeR:  NOT FOUND");
+        Console.WriteLine("    Builds the BDMV structure + UDF 2.50 ISO and renders SRT→PGS subs.");
+        Console.WriteLine("    Download tsMuxer-<ver>-win64.zip from");
+        Console.WriteLine("      https://github.com/justdan96/tsMuxer/releases");
+        Console.WriteLine("    and drop tsMuxeR.exe on PATH (or beside futureburn.exe).");
+    }
+    else
+    {
+        Console.WriteLine($"  tsMuxeR:  {tsm.VersionLine}");
+        Console.WriteLine($"            {tsm.Path}");
+    }
+    Console.WriteLine();
+
+    var ff = Futureburn.Core.Tools.FfmpegLocator.Locate();
+    if (ff is null)
+    {
+        Console.WriteLine("  ffmpeg:   NOT FOUND  (needed only to conform non-BD-legal sources)");
+        Console.WriteLine("    winget install Gyan.FFmpeg");
+    }
+    else
+    {
+        Console.WriteLine($"  ffmpeg:   {ff.VersionLine}");
+    }
+    Console.WriteLine();
+    Console.WriteLine(tsm is not null
+        ? "  Ready: futureburn bd-author <input> <out.iso>"
+        : "  Install tsMuxeR to enable `bd-author`.");
+    return tsm is null ? 1 : 0;
+}
+
+static int BdAuthorCommand(string[] args)
+{
+    if (args.Length < 3)
+    {
+        Console.WriteLine();
+        Console.WriteLine("usage: futureburn bd-author <input-video> <output.iso>");
+        Console.WriteLine("                            [--label NAME] [--burn <drive>] [--speed Nx] [--yes]");
+        Console.WriteLine();
+        Console.WriteLine("Authors a playable Blu-ray (BDMV) as a UDF 2.50 ISO from any video file.");
+        Console.WriteLine("BD-legal streams (H.264 ≤L4.1 at a legal frame size, AC3/DTS/LPCM/TrueHD");
+        Console.WriteLine("audio) are muxed with no re-encode; anything else is conformed with ffmpeg.");
+        Console.WriteLine("Text subtitles are rendered to PGS and chapters are carried over.");
+        Console.WriteLine();
+        Console.WriteLine("  --burn <drive>   after authoring, burn the ISO to the drive (BD-R).");
+        Console.WriteLine("Run `futureburn bd-author-info` to check that tsMuxeR is installed.");
+        return 1;
+    }
+
+    var input     = args[1];
+    var outIso    = args[2];
+    var label     = FlagValue(args, "--label") ?? Path.GetFileNameWithoutExtension(input);
+    var burnDrive = FlagValue(args, "--burn");
+    bool skipConfirm = HasFlag(args, "--yes") || HasFlag(args, "-y");
+    int? cdSpeedX = ParseSpeedFlag(args) is { } sps ? sps / 75 : null;
+
+    if (!File.Exists(input))
+    {
+        Console.Error.WriteLine($"Input video not found: {input}");
+        return 1;
+    }
+
+    OpticalDrive? burnTarget = null;
+    if (burnDrive is not null)
+    {
+        burnTarget = DriveEnumerator.Find(burnDrive);
+        if (burnTarget is null)
+        {
+            Console.Error.WriteLine($"--burn drive not found: {burnDrive}");
+            return 1;
+        }
+    }
+
+    Futureburn.Core.Authoring.MkvBdPipeline.Probed probed;
+    try { probed = Futureburn.Core.Authoring.MkvBdPipeline.Probe(input); }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"Couldn't probe the input: {ex.Message}");
+        return 1;
+    }
+
+    Console.WriteLine();
+    Console.WriteLine($"  Input:     {input}");
+    Console.WriteLine($"  Output:    {outIso}");
+    Console.WriteLine($"  Label:     {label}");
+    Console.WriteLine($"  Video:     {probed.VideoCodec} {probed.Width}x{probed.Height} @ {probed.FrameRate:0.###}fps " +
+                      $"({probed.Duration:hh\\:mm\\:ss})  {(probed.VideoLegal ? "BD-legal — no re-encode" : "will re-encode")}");
+    Console.WriteLine($"  Audio:     {probed.AudioTracks.Count} track(s)" +
+        (probed.AudioTracks.Count > 0 ? "  [" + string.Join(", ", probed.AudioTracks) + "]" : ""));
+    Console.WriteLine($"  Subtitles: {probed.SubtitleTracks.Count} track(s)" +
+        (probed.SubtitleTracks.Count > 0 ? "  [" + string.Join(", ", probed.SubtitleTracks) + "]" : ""));
+    Console.WriteLine($"  Chapters:  {probed.Chapters}");
+    if (probed.NeedsConform)
+        Console.WriteLine($"  Conform:   ffmpeg needed (non-BD stream present)");
+    if (burnTarget is not null)
+        Console.WriteLine($"  Burn to:   {burnTarget.PrimaryMount}  {burnTarget.VendorId} {burnTarget.ProductId}");
+    Console.WriteLine();
+
+    Futureburn.Core.Authoring.MkvBdPipeline.AuthorResult result;
+    try
+    {
+        int lastPct = -10;
+        result = Futureburn.Core.Authoring.MkvBdPipeline.Author(
+            new Futureburn.Core.Authoring.MkvBdPipeline.Options(input, outIso, label),
+            onLog: line =>
+            {
+                if (!line.StartsWith("frame=") && !line.StartsWith("size="))
+                    Console.WriteLine($"  {line}");
+            },
+            onProgress: frac =>
+            {
+                int pct = (int)(frac * 100);
+                if (pct >= lastPct + 10) { Console.WriteLine($"     ... {pct}%"); lastPct = pct; }
+            });
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine();
+        Console.Error.WriteLine($"Authoring failed: {ex.Message}");
+        return 1;
+    }
+
+    Console.WriteLine();
+    Console.WriteLine("--- Blu-ray authored ---");
+    Console.WriteLine($"  ISO:       {result.OutputIso}  ({FormatBytes(result.OutputBytes)})");
+    Console.WriteLine($"  Video:     {(result.ReencodedVideo ? "re-encoded to H.264" : "copied (no re-encode)")}");
+    Console.WriteLine($"  Audio:     {result.AudioTracks} track(s)" +
+                      (result.TranscodedAudio > 0 ? $", {result.TranscodedAudio} transcoded to AC-3" : ""));
+    Console.WriteLine($"  Subtitles: {result.Subtitles}, Chapters: {result.Chapters}");
+
+    if (burnTarget is not null)
+    {
+        Console.WriteLine();
+        return BurnExistingIso(outIso, burnTarget, cdSpeedX, skipConfirm);
+    }
+
+    Console.WriteLine();
+    Console.WriteLine("To burn it:");
+    Console.WriteLine($"  futureburn burn-iso \"{outIso}\" <drive>");
+    return 0;
+}
+
+// Burn an already-built ISO to a disc via the SPTI data burner. Shared by
+// `bd-author --burn`; mirrors BurnIsoCommand without the arg parsing.
+static int BurnExistingIso(string isoPath, OpticalDrive drive, int? cdSpeedX, bool skipConfirm)
+{
+    try
+    {
+        var plan = Futureburn.Core.Spti.SptiDataBurner.Plan(drive, isoPath);
+        Console.WriteLine($"  Disc:  {Mmc.LookupProfile(drive.CurrentProfiles.FirstOrDefault(p => p.Code != 0)?.Code ?? 0).Name}");
+        Console.WriteLine($"  Mode:  {DataBurnModeLabel(plan)}");
+        Console.WriteLine($"  Speed: {(cdSpeedX is { } x ? x + "x" : "drive default")}");
+
+        if (!skipConfirm)
+        {
+            Console.Write($"\nThis will write {FormatBytes(plan.ImageBytes)} to {drive.PrimaryMount}. Continue? [y/N] ");
+            if (Console.ReadLine()?.Trim().ToLowerInvariant() is not ("y" or "yes"))
+            {
+                Console.WriteLine("Aborted.");
+                return 0;
+            }
+        }
+
+        Console.WriteLine();
+        Console.WriteLine("Burning. Don't unplug the drive or close this window.");
+        Console.WriteLine();
+        int lastPct = -5;
+        Futureburn.Core.Spti.SptiDataBurner.ExecuteBurn(
+            plan,
+            requestedSpeedX: cdSpeedX,
+            onLog: msg => Console.WriteLine(msg),
+            onProgress: (written, total) =>
+            {
+                int pct = total > 0 ? (int)(written * 100 / total) : 0;
+                if (pct >= lastPct + 5 || written == total)
+                { Console.WriteLine($"  {pct,3}%  ({FormatBytes(written)} / {FormatBytes(total)})"); lastPct = pct; }
+            });
+        Console.WriteLine();
+        Console.WriteLine("BURN COMPLETE. Blu-ray disc finalized.");
+        return 0;
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine();
+        Console.Error.WriteLine($"Burn failed: {ex.Message}");
+        return 1;
     }
 }
 
@@ -2392,8 +2601,15 @@ static int FinalizeDisc(string[] args)
         return 1;
     }
     char letter = char.ToUpperInvariant(args[1][0]);
+    // BD-R finalizes with CLOSE FUNCTION 6; CD/DVD use 2. Auto-pick from the
+    // loaded profile, but allow an explicit override for probing.
+    bool isBd = DriveEnumerator.Find(letter.ToString())?.CurrentProfiles
+                    .Any(p => p.Code is 0x0041 or 0x0042 or 0x0043) ?? false;
+    byte closeFn = args.Length >= 3 && byte.TryParse(args[2], out var f)
+        ? f
+        : (isBd ? (byte)6 : (byte)2);
     Console.WriteLine();
-    Console.WriteLine($"Finalizing {letter}:\\ via SCSI CLOSE SESSION ...");
+    Console.WriteLine($"Finalizing {letter}:\\ via SCSI CLOSE SESSION (function {closeFn}) ...");
     try
     {
         using var dev = Futureburn.Core.Spti.SptiDevice.OpenDriveLetter(letter);
@@ -2406,7 +2622,7 @@ static int FinalizeDisc(string[] args)
         // until Status flips to Finalized — large multi-track sessions can
         // take 1-2 minutes for the lead-out to actually be written.
         Console.WriteLine("  CLOSE SESSION ... (this can take a few minutes for big multi-track discs)");
-        dev.CloseTrackOrSession(function: 2, trackNumber: 0, timeoutSec: 300, immediate: true);
+        dev.CloseTrackOrSession(function: closeFn, trackNumber: 0, timeoutSec: 300, immediate: true);
 
         var deadline = DateTime.UtcNow.AddSeconds(300);
         var after = info;

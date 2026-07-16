@@ -16,9 +16,13 @@ A passion project that grew teeth.
 - Three burn engines — IMAPI v2, IMAPI v1, raw SPTI/SCSI — so you can use whatever your drive likes.
 
 **Data & ISO discs**
-- Burn ISO images to CD-R / DVD±R / DVD±RW.
+- Burn ISO images to CD-R / DVD±R / DVD±RW / **BD-R / BD-RE**.
 - Build an ISO 9660 + Joliet + UDF image from any folder, then burn it — in one step or two.
 - Burn BIN/CUE data discs.
+
+**Blu-ray**
+- Burn Blu-ray discs — **BD-R** (single-layer, verified end-to-end on real hardware) and BD-RE. Sequential (SRM) recording with proper lead-out finalization.
+- Author playable **Blu-ray (BD-Video)** from any video file — muxes to a UDF 2.50 BDMV image, auto-conforming non-Blu-ray video/audio with ffmpeg, and carrying chapters plus subtitles (SRT rendered to PGS). Burn it to BD-R in one step (`bd-author --burn`). Needs [tsMuxeR](https://github.com/justdan96/tsMuxer) + ffmpeg (located, not bundled).
 
 **Video discs**
 - Author hardware-playable **DVD-Video** from any video file — point it at an MKV and it carries chapters, every audio track, and subtitles through to a burned disc.
@@ -44,7 +48,7 @@ See **[docs/](docs/)** for how each of these works under the hood.
 
 - **CD-Text and true gapless DAO** — the encoder is complete and correct, but writing either one needs a drive that supports SAO cue-sheet recording. The test-bench LG GE20LU10 doesn't, so the burn path is built but awaits SAO-capable hardware. (`cuesheet-probe <drive>` tells you whether yours qualifies.)
 - **Headless LightScribe submission** — works today via the LSS one-click dialog; fully programmatic submission is blocked on undocumented LSS internals.
-- **Blu-ray burning** — when the test hardware arrives.
+- **UHD / HEVC Blu-ray authoring** — `bd-author` targets standard H.264 Blu-ray today; 4K UHD BD and HEVC passthrough are a later pass. Non-BD subtitle formats (VobSub) are also skipped for now.
 - **Mac/Linux ports** — long after Windows is rock solid.
 
 ---

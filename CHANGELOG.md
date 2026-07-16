@@ -4,6 +4,18 @@ All notable changes to futureburn will land here. Format roughly follows [Keep a
 
 ## [Unreleased]
 
+## [0.0.55] — 2026-07-15
+
+### Added — Blu-ray support: BD-R burning + `bd-author` (MKV → BDMV)
+First real Blu-ray milestone, developed and verified end-to-end on a Pioneer BDR-206 with blank BD-R media:
+- **BD-R / BD-RE image burning.** `SptiDataBurner` now recognises the Blu-ray profiles (`0x0041` BD-R SRM, `0x0042` BD-R RRM, `0x0043` BD-RE) and burns them through the DVD-R Sequential path (RESERVE TRACK → WRITE 12 → CLOSE), with BD's 1× = 4390 KB/s speed unit and a tolerant MODE SELECT (BD-R records sequentially by profile; the CD/DVD Write Parameters page is skipped if the drive refuses it). `burn-iso` and `burn-folder` both get BD for free.
+- **BD-R finalization fix.** BD-R SRM finalizes with CLOSE TRACK/SESSION **function 6** ("finalize disc"), not function 2 — function 2 is a no-op on BD-R and leaves the disc `Incomplete` forever. Verified on the BDR-206: fn 2 → still Incomplete after 5 min; fn 6 → Finalized in ~2 s. `finalize <drive>` now auto-picks the right function from the loaded profile (with an optional numeric override for probing).
+- **`bd-author <input> <out.iso>`** — author a playable Blu-ray (BD-Video) from any video file. BD-legal streams (H.264 ≤L4.1 at a legal frame size, AC-3/DTS/LPCM/TrueHD audio) are muxed with **no re-encode**; anything else is conformed with ffmpeg (re-encode to H.264 High@4.1 with padding to a legal frame size, transcode non-BD audio to AC-3). Text subtitles are rendered to PGS and chapters are carried over. Output is a **UDF 2.50 Blu-ray ISO**; `--burn <drive>` chains straight into the BD-R burn. Muxing/BDMV/UDF work is delegated to tsMuxeR (located, not bundled — Apache-licensed but a portable download); `bd-author-info` checks the toolchain.
+- New `MkvBdPipeline`, `TsMuxerLocator`, `TsMuxerRunner`.
+
+### Fixed
+- **`FfprobeRunner.TryInt` threw on 64-bit chapter IDs.** MKV chapters carry a 64-bit `ChapterUID` that ffprobe reports as `id`; `JsonElement.GetInt32()` threw `FormatException` on any value past `Int32`, killing every probe of such a file — which also affected `dvdv-author`. Now uses `TryGetInt32` and falls back gracefully.
+
 ## [0.0.54] — 2026-05-22
 
 ### Added — app icon, how-it-works docs, leaner README
