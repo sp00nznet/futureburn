@@ -1,0 +1,103 @@
+# ============================================================================
+#  futureburn — GitHub Actions release pipeline
+# ============================================================================
+#  Port of .gitlab-ci.yml to GitHub-hosted runners. futureburn is Windows-only
+#  (.NET 8 WPF + IMAPI COM + the 32-bit LightScribe SDK), so every job runs on
+#  windows-latest — a *standard* GitHub-hosted runner, which is free with
+#  unlimited minutes on public repositories.
+#
+#  On each push to main this builds the solution, runs the xUnit suite, and
+#  publishes two self-contained SINGLE-FILE x86 .exe builds (CLI + GUI) as the
+#  assets of a rolling "latest" pre-release. That replaces the GitLab SMB
+#  `deploy` job — cloud runners can't reach the LAN `releases` share, so the
+#  binaries live on a GitHub Release instead (public, free, versionable).
+# ============================================================================
+
+name: release
+
+on:
+  push:
+    branches: [main]
+
+# Serialize runs on main so two pushes can't race the rolling release.
+concurrency:
+  group: release-main
+  cancel-in-progress: true
+
+permissions:
+  contents: write        # needed to create/update Releases + tags
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+  DOTNET_NOLOGO: "1"
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: "1"
+  # Both executables are x86 (the LightScribe SDK is 32-bit only).
+  RUNTIME: "win-x86"
+
+jobs:
+  build-test-release:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up .NET 8 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Restore
+        run: dotnet restore Futureburn.sln
+
+      - name: Build (Release)
+        run: dotnet build Futureburn.sln -c Release --no-restore
+
+      - name: Test (xUnit)
+        run: >
+          dotnet test tests/Futureburn.Core.Tests/Futureburn.Core.Tests.csproj
+          -c Release
+          --logger "trx;LogFileName=futureburn-tests.trx"
+          --results-directory test-results
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: test-results/
+          retention-days: 7
+
+      # Two self-contained, single-file x86 builds — the whole .NET runtime plus
+      # every managed and native dependency in one .exe. IncludeAllContentForSelfExtract
+      # forces a full extract to a temp dir on first run: required for the WPF GUI
+      # on x86 (otherwise SetWindowLongWndProc DllNotFoundException), kept on the
+      # CLI for consistency.
+      - name: Publish CLI (single-file x86)
+        run: >
+          dotnet publish src/Futureburn.Cli/Futureburn.Cli.csproj
+          -c Release -r ${{ env.RUNTIME }} --self-contained true
+          -p:PublishSingleFile=true -p:IncludeAllContentForSelfExtract=true
+          -o publish/cli
+
+      - name: Publish GUI (single-file x86)
+        run: >
+          dotnet publish src/Futureburn.Gui/Futureburn.Gui.csproj
+          -c Release -r ${{ env.RUNTIME }} --self-contained true
+          -p:PublishSingleFile=true -p:IncludeAllContentForSelfExtract=true
+          -o publish/gui
+
+      - name: Publish rolling "latest" release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Drop the previous rolling release + its tag (ignored if absent), then
+          # recreate it pointing at this commit with the fresh binaries attached.
+          gh release delete latest --cleanup-tag --yes 2>$null
+          gh release create latest `
+            publish/cli/Futureburn.Cli.exe `
+            publish/gui/Futureburn.Gui.exe `
+            --title "futureburn — latest (main)" `
+            --notes "Rolling self-contained build from the latest push to main (commit ${{ github.sha }}). Single-file x86 CLI + GUI — no installer, no runtime, no DLL folder. See CHANGELOG.md for what changed." `
+            --prerelease `
+            --target ${{ github.sha }}

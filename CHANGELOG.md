@@ -16,6 +16,9 @@ First real Blu-ray milestone, developed and verified end-to-end on a Pioneer BDR
 ### Fixed
 - **`FfprobeRunner.TryInt` threw on 64-bit chapter IDs.** MKV chapters carry a 64-bit `ChapterUID` that ffprobe reports as `id`; `JsonElement.GetInt32()` threw `FormatException` on any value past `Int32`, killing every probe of such a file — which also affected `dvdv-author`. Now uses `TryGetInt32` and falls back gracefully.
 
+### CI — GitHub Actions release pipeline
+- Ported `.gitlab-ci.yml` to `.github/workflows/release.yml`. On each push to `main` a `windows-latest` job builds the solution, runs the xUnit suite, and publishes the two self-contained single-file x86 `.exe`s (CLI + GUI) as the assets of a rolling `latest` pre-release. GitHub-hosted standard runners are free with unlimited minutes on public repos, so this can stand in for the self-hosted buildforever runners. The GitLab SMB `deploy` step has no cloud equivalent (runners can't reach the LAN share) — the binaries live on the GitHub Release instead.
+
 ## [0.0.54] — 2026-05-22
 
 ### Added — app icon, how-it-works docs, leaner README
