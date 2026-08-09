@@ -1,31 +1,33 @@
 # ============================================================================
-#  futureburn — GitHub Actions release pipeline
+#  futureburn — build + release pipeline (GitHub Actions)
 # ============================================================================
-#  Port of .gitlab-ci.yml to GitHub-hosted runners. futureburn is Windows-only
-#  (.NET 8 WPF + IMAPI COM + the 32-bit LightScribe SDK), so every job runs on
-#  windows-latest — a *standard* GitHub-hosted runner, which is free with
-#  unlimited minutes on public repositories.
+#  futureburn is Windows-only (.NET 8 WPF + IMAPI COM + the 32-bit LightScribe
+#  SDK), so everything runs on windows-latest — a *standard* GitHub-hosted
+#  runner, free with unlimited minutes on public repos.
 #
-#  On each push to main this builds the solution, runs the xUnit suite, and
-#  publishes two self-contained SINGLE-FILE x86 .exe builds (CLI + GUI) as the
-#  assets of a rolling "latest" pre-release. That replaces the GitLab SMB
-#  `deploy` job — cloud runners can't reach the LAN `releases` share, so the
-#  binaries live on a GitHub Release instead (public, free, versionable).
+#  - Every push to main (and every manual run) builds, tests, and uploads the
+#    two single-file x86 exes as a run artifact (bleeding-edge, downloadable
+#    from the Actions run page).
+#  - Pushing a version tag (vX.Y.Z) additionally publishes a proper GitHub
+#    Release named after the tag, with auto-generated "what changed" notes and
+#    the two exes attached. Cut a release with:
+#        git tag v0.0.57 && git push origin v0.0.57
 # ============================================================================
 
-name: release
+name: build
 
 on:
   push:
     branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
 
-# Serialize runs on main so two pushes can't race the rolling release.
 concurrency:
-  group: release-main
+  group: build-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
-  contents: write        # needed to create/update Releases + tags
+  contents: write        # needed to create Releases
 
 env:
   DOTNET_CLI_TELEMETRY_OPTOUT: "1"
@@ -86,18 +88,25 @@ jobs:
           -p:PublishSingleFile=true -p:IncludeAllContentForSelfExtract=true
           -o publish/gui
 
-      - name: Publish rolling "latest" release
+      # Bleeding-edge binaries from every build, downloadable from the run page.
+      - name: Upload binaries artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: futureburn-windows-x86
+          path: |
+            publish/cli/Futureburn.Cli.exe
+            publish/gui/Futureburn.Gui.exe
+
+      # Only on a version tag: publish a proper Release with auto-generated notes.
+      - name: Publish release (version tags only)
+        if: startsWith(github.ref, 'refs/tags/v')
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # Drop the previous rolling release + its tag (ignored if absent), then
-          # recreate it pointing at this commit with the fresh binaries attached.
-          gh release delete latest --cleanup-tag --yes 2>$null
-          gh release create latest `
+          gh release create ${{ github.ref_name }} `
             publish/cli/Futureburn.Cli.exe `
             publish/gui/Futureburn.Gui.exe `
-            --title "futureburn — latest (main)" `
-            --notes "Rolling self-contained build from the latest push to main (commit ${{ github.sha }}). Single-file x86 CLI + GUI — no installer, no runtime, no DLL folder. See CHANGELOG.md for what changed." `
-            --prerelease `
-            --target ${{ github.sha }}
+            --title ${{ github.ref_name }} `
+            --generate-notes `
+            --latest
