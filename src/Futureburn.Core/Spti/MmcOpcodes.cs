@@ -9,6 +9,7 @@ namespace Futureburn.Core.Spti;
 public static class MmcOpcodes
 {
     public const byte TestUnitReady       = 0x00;
+    public const byte FormatUnit          = 0x04;   // quick-format +RW / BD-RE
     public const byte Inquiry             = 0x12;
     public const byte ModeSense6          = 0x1A;
     public const byte StartStopUnit       = 0x1B;

@@ -24,6 +24,12 @@ A passion project that grew teeth.
 - Burn Blu-ray discs — **BD-R** (single-layer, verified end-to-end on real hardware) and BD-RE. Sequential (SRM) recording with proper lead-out finalization.
 - Author playable **Blu-ray (BD-Video)** from any video file — muxes to a UDF 2.50 BDMV image, auto-conforming non-Blu-ray video/audio with ffmpeg, and carrying chapters plus subtitles (SRT rendered to PGS). Burn it to BD-R in one step (`bd-author --burn`). Needs [tsMuxeR](https://github.com/justdan96/tsMuxer) + ffmpeg (located, not bundled).
 
+**Optical image toolkit** — the free replacement for DAEMON Tools (adware now)
+- **Rip** any finalized data disc (CD / DVD / BD) to an ISO.
+- **Convert** BIN/CUE, MDF/MDS, and NRG images to ISO.
+- **Mount** an image as a drive using Windows' own virtual-disk API — no kernel driver, no signed SCSI emulator. ISO/VHD mount directly; other formats auto-convert first.
+- **Erase** a rewritable disc (CD-RW / DVD±RW / DVD-RAM / BD-RE).
+
 **Video discs**
 - Author hardware-playable **DVD-Video** from any video file — point it at an MKV and it carries chapters, every audio track, and subtitles through to a burned disc.
 - **DVD menus** — root menu with Play / Scene Selection, plus a per-chapter scene menu.
@@ -40,7 +46,7 @@ A passion project that grew teeth.
 - Salvage partially-burned discs (`finalize`).
 
 **Two ways to drive it**
-- A full command-line tool, and a four-tile WPF GUI (every tile is wired and working).
+- A full command-line tool, and a five-tile WPF GUI (every tile is wired and working).
 
 See **[docs/](docs/)** for how each of these works under the hood.
 
@@ -55,7 +61,7 @@ See **[docs/](docs/)** for how each of these works under the hood.
 
 ## Screenshots
 
-The four-tile main window — pick what you want to do:
+The five-tile main window — pick what you want to do:
 
 ![futureburn main window](docs/screenshots/main-window.png)
 
@@ -74,6 +80,10 @@ The four-tile main window — pick what you want to do:
 **Burn Label (LightScribe)** — drag in a picture, pick a LightScribe drive and a quality, hit Burn — the drive etches the artwork into the disc's top coating:
 
 ![Burn Label window](docs/screenshots/burn-lightscribe.png)
+
+**Image Tools** — the optical image toolkit: rip a disc to ISO, convert BIN/CUE · MDF/MDS · NRG to ISO, mount an image as a drive (no driver), or erase a rewritable:
+
+![Image Tools window](docs/screenshots/image-tools.png)
 
 ---
 

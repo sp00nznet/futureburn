@@ -4,6 +4,44 @@ All notable changes to futureburn will land here. Format roughly follows [Keep a
 
 ## [Unreleased]
 
+## [0.0.56] — 2026-08-09
+
+### Added — optical image toolkit (rip / convert / mount / erase)
+Folds the non-driver value of DAEMON Tools (adware now) into futureburn, which
+already owned the optical layer. The guiding rule — *avoid the kernel driver,
+ship the documented-API cousin* — means the virtual-SCSI driver DAEMON Tools
+sells is deliberately skipped; everything here is plain user-mode work:
+- **`rip <drive> <out.iso>`** — grab a finalized data disc (CD/DVD/BD) to an ISO
+  via SPTI READ (10). Unreadable sectors are retried, then zero-filled and
+  counted so a rip completes on a scratched disc. Verified end-to-end: ripped the
+  burned Dalmatians BD-R back to a 2,460,288-sector ISO that re-mounts clean.
+- **`convert <image> <out.iso>`** — BIN/CUE, MDF/MDS, and NRG → ISO. NRG's data
+  extent is read from its NERO/NER5 footer; MDF/NRG sector layout (cooked 2048 vs
+  raw 2352 Mode 1/2) is detected from the CD-ROM sync mark and the 2048-byte
+  payload extracted. Round-trip verified byte-identical for all three formats.
+- **`mount <image>` / `unmount <image | X:>`** — mount via Windows' native
+  `AttachVirtualDisk` (the Tier-A cousin — no driver). ISO/IMG/VHD mount directly;
+  BIN/CUE/MDF/NRG auto-convert to a temp ISO first. futureburn keeps a small mount
+  ledger so `unmount <letter>` works (Windows exposes no clean letter→image
+  reverse lookup) and cleans up temp ISOs on unmount.
+- **`erase <drive> [--full]`** — blank a rewritable: BLANK for CD-RW/DVD-RW,
+  FORMAT UNIT for DVD+RW/DVD-RAM/BD-RE. Built and wired, but **not yet verified on
+  hardware** (no rewritable disc on the bench — the test drive only had write-once
+  BD-R). Confirm on a CD-RW/BD-RE before trusting it.
+- New Core: `DiscRipper`, `ImageConverter`, `DiscEraser`, `DiskImageMounter`, plus
+  SPTI `Read10` / `ReadCapacity10` / `Blank` / `FormatUnit`.
+
+### Added — GUI "Image Tools" tile
+Fifth main-window tile surfacing rip / convert / mount / unmount / erase, with a
+drive picker, live progress + log, and background-threaded operations. Tile
+subtitles now wrap instead of clipping. Tiles carry `AutomationProperties.Name`
+(accessibility + drives the screenshot harness).
+
+### Added — screenshot harness
+`scripts/capture-screenshots.ps1` launches the GUI, invokes each tile via UI
+Automation, and captures every window to `docs/screenshots/*.png` with
+PrintWindow (per-monitor-DPI-aware, so scaled displays capture at full res).
+
 ## [0.0.55] — 2026-07-15
 
 ### Added — Blu-ray support: BD-R burning + `bd-author` (MKV → BDMV)

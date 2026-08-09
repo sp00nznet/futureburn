@@ -43,6 +43,11 @@ return args[0].ToLowerInvariant() switch
     "bd-author"                    => BdAuthorCommand(args),
     "bd-author-info"               => BdAuthorInfo(),
     "finalize"                     => FinalizeDisc(args),
+    "rip"                          => RipCommand(args),
+    "convert"                      => ConvertCommand(args),
+    "mount"                        => MountCommand(args),
+    "unmount"                      => UnmountCommand(args),
+    "erase"                        => EraseCommand(args),
     "eject"                        => EjectDrive(args),
     "load"                         => LoadDrive(args),
     "help" or "--help" or "-h"     => PrintUsage(),
@@ -108,6 +113,14 @@ static int PrintUsage()
     Console.WriteLine("    flags: --label NAME, --burn <drive> (author + burn), --speed Nx, --yes");
     Console.WriteLine("           auto-conforms non-BD video/audio (ffmpeg); SRT→PGS subs + chapters carried over");
     Console.WriteLine("  futureburn bd-author-info             Check tsMuxeR + ffmpeg availability for Blu-ray authoring");
+    Console.WriteLine();
+    Console.WriteLine("  --- optical image toolkit ---");
+    Console.WriteLine("  futureburn rip <drive> <out.iso>      Grab a data disc to an ISO image (READ-only)");
+    Console.WriteLine("  futureburn convert <image> <out.iso>  Convert BIN/CUE, MDF/MDS, or NRG → ISO");
+    Console.WriteLine("  futureburn mount <image>              Mount an image as a drive (ISO native; others auto-convert)");
+    Console.WriteLine("  futureburn unmount <image | X:>       Unmount a mounted image (by path or drive letter)");
+    Console.WriteLine("  futureburn erase <drive> [--full]     Erase a rewritable (CD-RW/DVD±RW/DVD-RAM/BD-RE)");
+    Console.WriteLine();
     Console.WriteLine("  futureburn finalize <drive>           CLOSE SESSION on a disc with open tracks (salvage operation)");
     Console.WriteLine("  futureburn eject <drive>              Eject the drive tray");
     Console.WriteLine("  futureburn load <drive>               Close (load) the drive tray");
@@ -1344,6 +1357,198 @@ static int LoadDrive(string[] args)
     catch (Exception ex)
     {
         Console.Error.WriteLine($"load failed: {ex.Message}");
+        return 1;
+    }
+}
+
+// ── optical image toolkit (rip / convert / mount / erase) ───────────────────
+
+static int RipCommand(string[] args)
+{
+    if (args.Length < 3)
+    {
+        Console.WriteLine("\nusage: futureburn rip <drive> <out.iso>");
+        Console.WriteLine("  Reads a finalized data disc sector-by-sector into an ISO. Read-only on the disc.");
+        return 1;
+    }
+    var drive = DriveEnumerator.Find(args[1]);
+    if (drive is null) { Console.Error.WriteLine($"Drive not found: {args[1]}"); return 1; }
+    var outIso = args[2];
+
+    Futureburn.Core.Image.DiscRipper.RipPlan plan;
+    try { plan = Futureburn.Core.Image.DiscRipper.Plan(drive); }
+    catch (Exception ex) { Console.Error.WriteLine($"\nCan't rip: {ex.Message}"); return 1; }
+
+    Console.WriteLine();
+    Console.WriteLine($"  Drive:  {drive.PrimaryMount}  {drive.VendorId} {drive.ProductId}");
+    Console.WriteLine($"  Disc:   {plan.TotalSectors:N0} sectors × {plan.BlockSize} B = {FormatBytes(plan.TotalBytes)}");
+    Console.WriteLine($"  Output: {outIso}");
+    Console.WriteLine();
+    Console.WriteLine("Ripping ...");
+
+    int lastPct = -5;
+    try
+    {
+        var r = Futureburn.Core.Image.DiscRipper.Rip(plan, outIso,
+            onProgress: (done, total) =>
+            {
+                int pct = total > 0 ? (int)(done * 100 / total) : 0;
+                if (pct >= lastPct + 5) { Console.WriteLine($"  {pct,3}%  ({FormatBytes(done)} / {FormatBytes(total)})"); lastPct = pct; }
+            },
+            onLog: msg => Console.WriteLine(msg));
+        Console.WriteLine();
+        Console.WriteLine($"RIP COMPLETE — {FormatBytes(r.BytesWritten)} → {outIso}" +
+                          (r.BadSectors > 0 ? $"  (⚠ {r.BadSectors:N0} unreadable sectors zero-filled)" : ""));
+        return 0;
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"\nRip failed: {ex.Message}");
+        try { File.Delete(outIso); } catch { }
+        return 1;
+    }
+}
+
+static int ConvertCommand(string[] args)
+{
+    if (args.Length < 3)
+    {
+        Console.WriteLine("\nusage: futureburn convert <image> <out.iso>");
+        Console.WriteLine("  Converts BIN/CUE, MDF/MDS, or NRG to a plain ISO.");
+        return 1;
+    }
+    var input = args[1];
+    var output = args[2];
+    if (!File.Exists(input)) { Console.Error.WriteLine($"Image not found: {input}"); return 1; }
+
+    Console.WriteLine();
+    Console.WriteLine($"  Input:  {input}");
+    Console.WriteLine($"  Output: {output}");
+    Console.WriteLine();
+    int lastPct = -10;
+    try
+    {
+        var r = Futureburn.Core.Image.ImageConverter.ToIso(input, output,
+            onProgress: (done, total) =>
+            {
+                int pct = total > 0 ? (int)(done * 100 / total) : 0;
+                if (pct >= lastPct + 10) { Console.WriteLine($"  {pct,3}%"); lastPct = pct; }
+            },
+            onLog: msg => Console.WriteLine($"  {msg}"));
+        Console.WriteLine();
+        Console.WriteLine($"CONVERTED {r.SourceFormat} → {FormatBytes(r.IsoBytes)} ISO ({r.Sectors:N0} sectors)");
+        return 0;
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"\nConvert failed: {ex.Message}");
+        try { File.Delete(output); } catch { }
+        return 1;
+    }
+}
+
+static int MountCommand(string[] args)
+{
+    if (args.Length < 2)
+    {
+        Console.WriteLine("\nusage: futureburn mount <image>");
+        Console.WriteLine("  Mounts .iso/.img/.vhd natively; .cue/.bin/.mdf/.mds/.nrg auto-convert to a temp ISO first.");
+        return 1;
+    }
+    var image = args[1];
+    if (!File.Exists(image)) { Console.Error.WriteLine($"Image not found: {image}"); return 1; }
+
+    try
+    {
+        string toMount = image;
+        string? tempIso = null;
+        if (!Futureburn.Core.Tools.DiskImageMounter.IsNativelyMountable(image))
+        {
+            tempIso = Path.Combine(Path.GetTempPath(), $"futureburn-mount-{Guid.NewGuid():N}.iso");
+            Console.WriteLine($"\n{Path.GetExtension(image)} isn't natively mountable — converting to a temp ISO first ...");
+            Futureburn.Core.Image.ImageConverter.ToIso(image, tempIso, onLog: m => Console.WriteLine($"  {m}"));
+            toMount = tempIso;
+        }
+        var letter = Futureburn.Core.Tools.DiskImageMounter.Mount(toMount);
+        Console.WriteLine();
+        Console.WriteLine($"Mounted at {letter}:\\");
+        Console.WriteLine($"  Unmount with:  futureburn unmount {letter}:");
+        if (tempIso is not null)
+            Console.WriteLine($"  (backed by temp ISO {tempIso} — removed on unmount/reboot)");
+        return 0;
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"\nMount failed: {ex.Message}");
+        return 1;
+    }
+}
+
+static int UnmountCommand(string[] args)
+{
+    if (args.Length < 2)
+    {
+        Console.WriteLine("\nusage: futureburn unmount <image-path | X:>");
+        return 1;
+    }
+    var arg = args[1];
+    try
+    {
+        // A bare drive letter ("H", "H:", "H:\") unmounts whatever image backs it.
+        bool isLetter = arg.Length <= 3 && char.IsLetter(arg[0])
+                        && (arg.Length == 1 || arg[1] == ':');
+        if (isLetter)
+            Futureburn.Core.Tools.DiskImageMounter.UnmountByLetter(arg[0]);
+        else
+            Futureburn.Core.Tools.DiskImageMounter.UnmountByImage(arg);
+        Console.WriteLine($"\nUnmounted {arg}");
+        return 0;
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"\nUnmount failed: {ex.Message}");
+        return 1;
+    }
+}
+
+static int EraseCommand(string[] args)
+{
+    if (args.Length < 2 || args[1].Length < 1 || !char.IsLetter(args[1][0]))
+    {
+        Console.WriteLine("\nusage: futureburn erase <drive> [--full] [--yes]");
+        Console.WriteLine("  Erases a rewritable disc. Default is a fast/minimal blank; --full wipes the whole");
+        Console.WriteLine("  recorded area (minutes). Works on CD-RW, DVD-RW/+RW, DVD-RAM, BD-RE.");
+        return 1;
+    }
+    var drive = DriveEnumerator.Find(args[1]);
+    if (drive is null) { Console.Error.WriteLine($"Drive not found: {args[1]}"); return 1; }
+    bool full = HasFlag(args, "--full");
+    bool skipConfirm = HasFlag(args, "--yes") || HasFlag(args, "-y");
+
+    var profileName = Mmc.LookupProfile(drive.CurrentProfiles.FirstOrDefault(p => p.Code != 0)?.Code ?? 0).Name;
+    Console.WriteLine();
+    Console.WriteLine($"  Drive: {drive.PrimaryMount}  {drive.VendorId} {drive.ProductId}");
+    Console.WriteLine($"  Disc:  {profileName}");
+    Console.WriteLine($"  Mode:  {(full ? "FULL blank (whole disc — slow)" : "minimal/quick blank")}");
+
+    if (!skipConfirm)
+    {
+        Console.Write($"\nThis PERMANENTLY ERASES everything on {drive.PrimaryMount}. Continue? [y/N] ");
+        if (Console.ReadLine()?.Trim().ToLowerInvariant() is not ("y" or "yes"))
+        { Console.WriteLine("Aborted."); return 0; }
+    }
+
+    Console.WriteLine();
+    try
+    {
+        var r = Futureburn.Core.Spti.DiscEraser.Erase(drive, full, onLog: m => Console.WriteLine($"  {m}"));
+        Console.WriteLine();
+        Console.WriteLine($"ERASED — {r.MediaName} via {r.Method}. Disc is now blank.");
+        return 0;
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"\nErase failed: {ex.Message}");
         return 1;
     }
 }

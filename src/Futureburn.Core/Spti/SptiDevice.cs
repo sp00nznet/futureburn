@@ -393,6 +393,83 @@ public sealed class SptiDevice : IDisposable
     }
 
     /// <summary>
+    /// MMC READ CAPACITY (10) (0x25). Returns the address of the last readable
+    /// logical block and the block size in bytes. For a finalized data disc the
+    /// user-data sector count is (LastLba + 1). Block size is normally 2048.
+    /// </summary>
+    public (long LastLba, int BlockSize) ReadCapacity10()
+    {
+        var data = new byte[8];
+        var cdb = new byte[16];
+        cdb[0] = MmcOpcodes.ReadCapacity10;
+        SendScsi(cdb, cdbLength: 10, data, dataIn: true);
+        long lastLba = ((long)data[0] << 24) | ((long)data[1] << 16) | ((long)data[2] << 8) | data[3];
+        int blockSize = (data[4] << 24) | (data[5] << 16) | (data[6] << 8) | data[7];
+        return (lastLba, blockSize);
+    }
+
+    /// <summary>
+    /// MMC READ (10) (0x28). Reads <paramref name="numBlocks"/> logical blocks
+    /// starting at <paramref name="startLba"/> into <paramref name="buffer"/>.
+    /// For data discs blocks are 2048 bytes. <paramref name="dataLength"/> lets
+    /// the caller reuse a fixed-size buffer for a smaller final chunk (same
+    /// CDB/transfer-length agreement the write path needs).
+    /// </summary>
+    public void Read10(int startLba, int numBlocks, byte[] buffer, int timeoutSec = 60, int? dataLength = null)
+    {
+        var cdb = new byte[16];
+        cdb[0] = MmcOpcodes.Read10;
+        cdb[2] = (byte)((startLba >> 24) & 0xFF);
+        cdb[3] = (byte)((startLba >> 16) & 0xFF);
+        cdb[4] = (byte)((startLba >>  8) & 0xFF);
+        cdb[5] = (byte)( startLba        & 0xFF);
+        cdb[7] = (byte)((numBlocks >> 8) & 0xFF);
+        cdb[8] = (byte)( numBlocks       & 0xFF);
+        SendScsi(cdb, cdbLength: 10, buffer, dataIn: true,
+                 timeoutSec: timeoutSec, dataLength: dataLength);
+    }
+
+    /// <summary>
+    /// MMC BLANK (0xA1) — erase a rewritable disc (CD-RW, DVD-RW sequential).
+    /// <paramref name="minimal"/>=true does the fast "minimal" blank (just the
+    /// PMA/TOC/pregap, leaving the body intact but the disc appearing empty);
+    /// false does a full blank of the whole recorded area (minutes). IMMED=1, so
+    /// the drive erases asynchronously — poll <see cref="WaitUntilReady"/> after.
+    /// DVD+RW / BD-RE are random-overwrite media and reject BLANK; they're
+    /// erased with FORMAT UNIT instead (see DiscEraser).
+    /// </summary>
+    public void Blank(bool minimal = true, bool immediate = true)
+    {
+        var cdb = new byte[16];
+        cdb[0] = MmcOpcodes.BlankCommand;
+        // byte 1: bit 4 = IMMED, bits 2-0 = Blanking Type (000 = full, 001 = minimal).
+        byte b1 = (byte)(minimal ? 0x01 : 0x00);
+        if (immediate) b1 |= 0x10;
+        cdb[1] = b1;
+        // bytes 2-5 (start address / track) stay 0 for a whole-disc blank.
+        SendScsi(cdb, cdbLength: 12, dataBuffer: null, dataIn: false, timeoutSec: 120);
+    }
+
+    /// <summary>
+    /// MMC FORMAT UNIT (0x04) quick-format for random-overwrite rewritables
+    /// (DVD+RW, DVD-RAM, BD-RE). Sends a single format descriptor; with IMMED
+    /// the drive backgrounds the format and reports progress via its sense data.
+    /// </summary>
+    public void FormatUnit(int immediate = 1)
+    {
+        // Parameter list: 4-byte Format List Header + one 8-byte Format Descriptor.
+        var param = new byte[12];
+        // Header: byte 1 bit1 = IMMED, bit3 = FOV (format options valid).
+        param[1] = (byte)((immediate != 0 ? 0x02 : 0x00) | 0x08);
+        param[2] = 0x00; param[3] = 0x08;   // Format descriptor length = 8
+        // Descriptor: number-of-blocks = 0 (drive picks max), type per media.
+        // Format type in byte 8 bits 7-2: 0x00 = full format; the drive maps it
+        // to the media's native quick-format for +RW/BD-RE.
+        SendScsi(new byte[16] { MmcOpcodes.FormatUnit, 0x11, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+                 cdbLength: 6, param, dataIn: false, timeoutSec: 300);
+    }
+
+    /// <summary>
     /// MMC SYNCHRONIZE CACHE (0x35). Tells the drive to flush any internally
     /// buffered data to the disc. Call after each track's WRITE 12 loop to
     /// ensure the data is committed before CLOSE TRACK.
